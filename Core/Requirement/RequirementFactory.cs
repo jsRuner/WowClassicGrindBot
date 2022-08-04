@@ -289,6 +289,8 @@ namespace Core
                 { "TotalRune", playerReader.MaxRune },
                 { "Combo Point", playerReader.ComboPoints },
                 { "BagCount", bagReader.BagItemCount },
+                { "FoodCount", addonReader.BagReader.FoodItemCount },
+                { "DrinkCount", addonReader.BagReader.DrinkItemCount },
                 { "MobCount", addonReader.DamageTakenCount },
                 { "MinRange", playerReader.MinRange },
                 { "MaxRange", playerReader.MaxRange },
@@ -299,6 +301,7 @@ namespace Core
                 //"Cost_{KeyAction.Name}"
                 //"Buff_{textureId}"
                 //"Debuff_{textureId}"
+                //"TBuff_{textureId}"
                 { "MainHandSpeed", playerReader.MainHandSpeedMs },
                 { "MainHandSwing", () => Math.Clamp(playerReader.MainHandSwing.ElapsedMs() - playerReader.MainHandSpeedMs(), -playerReader.MainHandSpeedMs(), 0) },
                 { "CurGCD", playerReader.GCD._Value },
@@ -384,7 +387,9 @@ namespace Core
             item.RequirementsRuntime = requirements.ToArray();
         }
 
-        public void InitUserDefinedIntVariables(Dictionary<string, int> intKeyValues, AuraTimeReader playerBuffTimeReader, AuraTimeReader targetDebuffTimeReader)
+        public void InitUserDefinedIntVariables(Dictionary<string, int> intKeyValues,
+            AuraTimeReader playerBuffTimeReader, AuraTimeReader targetDebuffTimeReader,
+            AuraTimeReader targetBuffTimeReader)
         {
             foreach ((string key, int value) in intKeyValues)
             {
@@ -404,6 +409,11 @@ namespace Core
                     else if (key.StartsWith("Debuff_"))
                     {
                         int l() => targetDebuffTimeReader.GetRemainingTimeMs(value);
+                        intVariables.TryAdd($"{value}", l);
+                    }
+                    else if (key.StartsWith("TBuff_"))
+                    {
+                        int l() => targetBuffTimeReader.GetRemainingTimeMs(value);
                         intVariables.TryAdd($"{value}", l);
                     }
 
@@ -678,14 +688,19 @@ namespace Core
 
         private Requirement CreateActionUsableRequirement(KeyAction item, PlayerReader playerReader, ActionBarBits usableAction)
         {
+            bool CanDoFormChangeMinMana()
+            {
+                return playerReader.ManaCurrent() >= item.FormCost() + item.MinMana;
+            }
+
             bool f() =>
                     !item.HasFormRequirement ? usableAction.Is(item) :
                     (playerReader.Form == item.FormEnum && usableAction.Is(item)) ||
-                    (playerReader.Form != item.FormEnum && item.CanDoFormChangeMinResource());
+                    (playerReader.Form != item.FormEnum && CanDoFormChangeMinMana());
 
             string s() =>
                     !item.HasFormRequirement ? "Usable" :
-                    (playerReader.Form != item.FormEnum && item.CanDoFormChangeMinResource()) ? "Usable after Form change" :
+                    (playerReader.Form != item.FormEnum && CanDoFormChangeMinMana()) ? "Usable after Form change" :
                     (playerReader.Form == item.FormEnum && usableAction.Is(item)) ? "Usable current Form" : "not Usable current Form";
 
             return new Requirement
