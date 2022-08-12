@@ -1,37 +1,30 @@
 ﻿using System.Drawing;
+using System;
 
 namespace SharedLib.NpcFinder
 {
-    public readonly struct NpcPosition
+    public readonly struct NpcPosition : IEquatable<NpcPosition>
     {
-        public readonly int Left => Rect.Left;
-        public readonly int Top => Rect.Top;
-        public readonly int Height => Rect.Height;
-        public readonly int Width => Rect.Width;
+        public static readonly NpcPosition Empty = new(Point.Empty, Point.Empty, 0, 0);
 
         public readonly Rectangle Rect;
         public readonly Point ClickPoint;
 
-        public readonly bool IsAdd;
-
-        public readonly int screenMid;
-        public readonly int screenTargetBuffer;
-        public readonly int screenMidBuffer;
-        public readonly int screenAddBuffer;
-
-        public NpcPosition(Point min, Point max, int screenWidth, float yOffset, float heightMul)
+        public NpcPosition(Point min, Point max, float yOffset, float heightMul)
         {
             Rect = new(min.X, min.Y, max.X - min.X, max.Y - min.Y);
-
-            screenMid = screenWidth / 2;
-            screenMidBuffer = screenWidth / 15;
-            screenTargetBuffer = screenMidBuffer / 2;
-            screenAddBuffer = screenMidBuffer * 3;
-
             ClickPoint = new(min.X + (Rect.Width / 2), (int)(max.Y + yOffset + (Rect.Height * heightMul)));
+        }
 
-            IsAdd = (ClickPoint.X < screenMid - screenTargetBuffer && ClickPoint.X > screenMid - screenAddBuffer) ||
-            (ClickPoint.X > screenMid + screenTargetBuffer && ClickPoint.X < screenMid + screenAddBuffer);
+        public NpcPosition(Rectangle rect, float yOffset, float heightMul)
+        {
+            Rect = rect;
+            ClickPoint = new(rect.Left + (rect.Width / 2), (int)(rect.Bottom + yOffset + (rect.Height * heightMul)));
+        }
+
+        public bool Equals(NpcPosition other)
+        {
+            return Rect == other.Rect;
         }
     }
 }

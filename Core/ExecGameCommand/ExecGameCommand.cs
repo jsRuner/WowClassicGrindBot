@@ -9,14 +9,12 @@ namespace Core
     {
         private readonly ILogger logger;
         private readonly WowProcessInput wowProcessInput;
-        private readonly CancellationTokenSource cts;
-
-        private readonly Random random = new();
+        private readonly CancellationToken ct;
 
         public ExecGameCommand(ILogger logger, CancellationTokenSource cts, WowProcessInput wowProcessInput)
         {
             this.logger = logger;
-            this.cts = cts;
+            ct = cts.Token;
             this.wowProcessInput = wowProcessInput;
         }
 
@@ -29,19 +27,19 @@ namespace Core
             Wait(100, 250);
 
             // Open chat inputbox
-            wowProcessInput.KeyPress(ConsoleKey.Enter, random.Next(50, 100));
+            wowProcessInput.KeyPress(ConsoleKey.Enter, Random.Shared.Next(50, 100));
 
             wowProcessInput.PasteFromClipboard();
             Wait(100, 250);
 
             // Close chat inputbox
-            wowProcessInput.KeyPress(ConsoleKey.Enter, random.Next(50, 100));
+            wowProcessInput.KeyPress(ConsoleKey.Enter, Random.Shared.Next(50, 100));
             Wait(100, 250);
         }
 
         private void Wait(int min, int max)
         {
-            cts.Token.WaitHandle.WaitOne(random.Next(min, max));
+            ct.WaitHandle.WaitOne(Random.Shared.Next(min, max));
         }
     }
 }

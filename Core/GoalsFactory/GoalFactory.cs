@@ -149,7 +149,7 @@ namespace Core
             IEnumerable<GoapGoal> goals = provider.GetServices<GoapGoal>();
             IEnumerable<IRouteProvider> pathProviders = goals.OfType<IRouteProvider>();
 
-            RouteInfo routeInfo = new(route, pathProviders, addonReader);
+            RouteInfo routeInfo = new(route, pathProviders, addonReader.PlayerReader, addonReader.AreaDb);
 
             pather.DrawLines(new()
             {
@@ -200,7 +200,8 @@ namespace Core
                     x.GetRequiredService<Wait>(), x.GetRequiredService<AddonReader>(),
                     x.GetRequiredService<Navigation>(), x.GetRequiredService<StopMoving>(),
                     x.GetRequiredService<NpcNameTargeting>(), x.GetRequiredService<ClassConfiguration>(),
-                    x.GetRequiredService<MountHandler>(), x.GetRequiredService<ExecGameCommand>()));
+                    x.GetRequiredService<MountHandler>(), x.GetRequiredService<ExecGameCommand>(),
+                    x.GetRequiredService<CancellationTokenSource>()));
             }
         }
 

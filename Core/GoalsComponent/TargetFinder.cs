@@ -9,13 +9,14 @@ namespace Core.Goals
         private readonly ConfigurableInput input;
         private readonly ClassConfiguration classConfig;
         private readonly PlayerReader playerReader;
-
+        private readonly Wait wait;
         private readonly NpcNameTargeting npcNameTargeting;
 
-        public TargetFinder(ConfigurableInput input, ClassConfiguration classConfig, PlayerReader playerReader, NpcNameTargeting npcNameTargeting)
+        public TargetFinder(ConfigurableInput input, ClassConfiguration classConfig, Wait wait, PlayerReader playerReader, NpcNameTargeting npcNameTargeting)
         {
             this.classConfig = classConfig;
             this.input = input;
+            this.wait = wait;
             this.playerReader = playerReader;
             this.npcNameTargeting = npcNameTargeting;
         }
@@ -25,24 +26,25 @@ namespace Core.Goals
             npcNameTargeting.ChangeNpcType(NpcNames.None);
         }
 
-        public bool Search(NpcNames target, Func<bool> validTarget, CancellationTokenSource cts)
+        public bool Search(NpcNames target, Func<bool> validTarget, CancellationToken ct)
         {
-            return LookForTarget(target, cts) && validTarget();
+            return LookForTarget(target, ct) && validTarget();
         }
 
-        private bool LookForTarget(NpcNames target, CancellationTokenSource cts)
+        private bool LookForTarget(NpcNames target, CancellationToken ct)
         {
-            if (!cts.IsCancellationRequested)
+            if (!ct.IsCancellationRequested)
             {
                 input.NearestTarget();
             }
 
-            if (!cts.IsCancellationRequested && !classConfig.KeyboardOnly && !playerReader.Bits.HasTarget())
+            if (!ct.IsCancellationRequested && !classConfig.KeyboardOnly && !playerReader.Bits.HasTarget())
             {
                 npcNameTargeting.ChangeNpcType(target);
-                if (!cts.IsCancellationRequested && npcNameTargeting.NpcCount > 0)
+                if (!ct.IsCancellationRequested && npcNameTargeting.NpcCount > 0)
                 {
-                    npcNameTargeting.TargetingAndClickNpc(true, cts);
+                    if (npcNameTargeting.InteractFirst(ct))
+                        wait.Update();
                 }
             }
 

@@ -279,18 +279,17 @@ To change the default movement keys to `WASD` in the ClassConfiguration file or 
 ```
 
 `Targeting`:
+
 | In-Game | Key | ClassConfiguration KeyAction Name | Desciption |
 | ---- | ---- | ---- | ---- |
 | Target Nearest Enemy | Tab | TargetNearestTargetKey | ---- |
 | Target Pet | Multiply | TargetPetKey | Only pet based class |
-| Target Last Target | G | TargetLastTargetKey | ---- |
-| Interact With Target | I | InteractKey | ---- |
+| Target Last Target | G | TargetLastTargetKey | Loot last target |
+| Interact With Mouseover | J | InteractMouseOverKey | Mouse based actions |
+| Interact With Target | I | InteractKey | Targeting and combat |
 | Assist Target | F | TargetTargetOfTargetKey | ---- |
 | Pet attack | Subtract | PetAttackKey | Only pet based class |
 | Target Focus | PageUp | TargetFocusKey | Only for `"AssistFocus"` Mode |
-
-The `"Interact with Target"` keybind is super important as it allows the bot to turn towards and approach the target.
-The `"Target Last Target"` keybind helps with looting.
 
 ## 10.1. Actionbar Key Bindings:
 
@@ -822,6 +821,7 @@ Formula: `[Keyword] [Operator] [Numeric integer value]`
 | `UnholyRune` | Player current unholy runes |
 | `TotalRune` | Player current runes (blood+frost+unholy+death) |
 | `Combo Point` | Player current combo points on the target |
+| `Durability%` | Player worn equipment average durability. **0-99** value range. |
 | `BagCount` | How many items in the player inventory |
 | `FoodCount` | Returns the highest amount of food type, item count |
 | `DrinkCount` | Returns the highest amount of drink type, item count |
@@ -1383,8 +1383,10 @@ Formula: `SpellInRange:[Numeric integer value]`
 | Hunter | Raptor Strike | 0 |
 | Hunter | Auto Shot | 1 |
 | Hunter | Serpent Sting | 2 |
+| Hunter | Feed Pet | 3 |
 | Warlock | Shadow Bolt | 0 |
 | Warlock | Shoot | 1 |
+| Warlock | Health Funnel | 2 |
 | Shaman | Lightning Bolt | 0 |
 | Shaman | Earth Shock | 1 |
 | Death Knight | Icy Touch | 0 |
@@ -1392,6 +1394,23 @@ Formula: `SpellInRange:[Numeric integer value]`
 | Death Knight | Death Grip | 2 |
 | Death Knight | Dark Command | 3 |
 | Death Knight | Raise Dead | 4 |
+
+Shared [CheckInteractDistance](https://wowwiki-archive.fandom.com/wiki/API_CheckInteractDistance) API
+
+| Unit | id |
+| --- | --- |
+| focustarget Inspect | 12 |
+| focustarget Trade | 13 |
+| focustarget Duel | 14 |
+| focus Inspect | 15 |
+| focus Trade | 16 |
+| focus Duel | 17 |
+| pet Inspect | 18 |
+| pet Trade | 19 |
+| pet Duel | 20 |
+| target Inspect | 21 |
+| target Trade | 22 |
+| target Duel | 23 |
 
 e.g.
 ```json
