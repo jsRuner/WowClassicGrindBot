@@ -20,7 +20,7 @@ namespace Core
         private readonly PlayerReader playerReader;
         private readonly CastingHandler castingHandler;
         private readonly StopMoving stopMoving;
-        private readonly IBlacklist blacklist;
+        private readonly IBlacklist targetBlacklist;
 
         public MountHandler(ILogger logger, ConfigurableInput input, ClassConfiguration classConfig, Wait wait, AddonReader addonReader, CastingHandler castingHandler, StopMoving stopMoving, IBlacklist blacklist)
         {
@@ -32,7 +32,7 @@ namespace Core
             this.playerReader = addonReader.PlayerReader;
             this.castingHandler = castingHandler;
             this.stopMoving = stopMoving;
-            this.blacklist = blacklist;
+            this.targetBlacklist = blacklist;
         }
 
         public bool CanMount()
@@ -104,9 +104,9 @@ namespace Core
 
         public bool ShouldMount(Vector3 target)
         {
-            var location = playerReader.PlayerLocation;
-            var distance = location.DistanceXYTo(target);
-            return distance > DISTANCE_TO_MOUNT;
+            Vector3 playerMap = playerReader.MapPos;
+            float mapDistance = playerMap.MapDistanceXYTo(target);
+            return mapDistance > DISTANCE_TO_MOUNT;
         }
 
         public void Dismount()
@@ -144,7 +144,7 @@ namespace Core
 
         private bool MountedOrNotCastingOrValidTargetOrEnteredCombat() => playerReader.Bits.IsMounted() || !playerReader.IsCasting() || HasValidTarget() || playerReader.Bits.PlayerInCombat();
 
-        private bool HasValidTarget() => playerReader.Bits.HasTarget() && !blacklist.IsTargetBlacklisted() && playerReader.MinRange() < MIN_DISTANCE_TO_INTERRUPT_CAST;
+        private bool HasValidTarget() => playerReader.Bits.HasTarget() && !targetBlacklist.Is() && playerReader.MinRange() < MIN_DISTANCE_TO_INTERRUPT_CAST;
 
         private void Log(string text)
         {

@@ -628,6 +628,26 @@ e.g.
     ]
 }
 ```
+### Wait Goals
+
+These actions cause to wait while the Requirements are met, during this time the player going to be idle, until lowered cost action can be executed.
+
+e.g.
+```json
+"Wait": {
+    "Sequence": [
+    {
+        "Cost": 19,
+        "Name": "HP regen",
+        "Requirements": [
+            "FoodCount == 0 || !Usable:Food",
+            "Health% < 90"
+        ]
+    }
+    ]
+},
+```
+---
 ### NPC Goals
 
 These command are for vendoring and repair.
@@ -653,26 +673,7 @@ e.g.
     ]
 }
 ```
-### Wait Goals
 
-These actions cause to wait while the Requirements are met, during this time the player going to be idle, until lowered cost action can be executed.
-
-e.g.
-```json
-"Wait": {
-    "Sequence": [
-    {
-        "Cost": 19,
-        "Name": "HP regen",
-        "Requirements": [
-            "FoodCount == 0 || !Usable:Food",
-            "Health% < 90"
-        ]
-    }
-    ]
-},
-```
----
 The "Key" is a key that is bound to a macro. The macro needs to target the NPC, and if necessary open up the repair or vendor page. The bot will click the key and the npc will be targetted. Then it will click the interact button which will cause the bot to move to the NPC and open the NPC options, this may be enough to get the auto repair and auto sell greys to happen. But the bot will click the button again in case there are further steps (e.g. SelectGossipOption), or you have many greys or items to sell.
 
 e.g. Sell macro - bound to the `"C"` key using BindPad or Key bindings
@@ -848,6 +849,7 @@ For the `MinRange` and `MaxRange` gives an approximation range distance between 
 
 | MinRange | MaxRange | alias Description |
 | --- | --- | --- |
+| 0 | 2 | "InCloseMeleeRange" |
 | 0 | 5 | "InMeleeRange" |
 | 5 | 15 | "IsInDeadZoneRange" |
 
@@ -1198,6 +1200,7 @@ Allow requirements about what buffs/debuffs you have or the target has or in gen
 | `"HasAmmo"` | AmmoSlot has equipped ammo and count is greater than zero |
 | `"IsCasting"` | The player is currently casting any spell. |
 | `"InMeleeRange"` | Target is approximately 0-5 yard range |
+| `"InCloseMeleeRange"` | Target is approximately 0-2 yard range |
 | `"InDeadZoneRange"` | Target is approximately 5-11 yard range |
 | `"InCombatRange"` | Class based - Have any ability which allows you to attack target from current place |
 | `"OutOfCombatRange"` | Negated value of "InCombatRange" |
@@ -1224,6 +1227,7 @@ Allow requirements about what buffs/debuffs you have or the target has or in gen
 | Druid | `"Prowl"` |
 | Druid | `"Rejuvenation"` |
 | Druid | `"Regrowth"` |
+| Druid | `"Omen of Clarity"` |
 | Mage | `"Frost Armor"` |
 | Mage | `"Ice Armor"` |
 | Mage | `"Molten Armor"` |

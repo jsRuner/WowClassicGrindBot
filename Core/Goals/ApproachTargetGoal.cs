@@ -21,12 +21,12 @@ namespace Core.Goals
         private readonly PlayerReader playerReader;
         private readonly StopMoving stopMoving;
         private readonly CombatUtil combatUtil;
-        private readonly IBlacklist blacklist;
+        private readonly IBlacklist targetBlacklist;
 
         private DateTime approachStart;
 
         private double nextStuckCheckTime;
-        private Vector3 lastPlayerLocation;
+        private Vector3 playerMap;
 
         private int initialTargetGuid;
         private float initialMinRange;
@@ -44,7 +44,7 @@ namespace Core.Goals
             this.playerReader = addonReader.PlayerReader;
             this.stopMoving = stopMoving;
             this.combatUtil = combatUtil;
-            this.blacklist = blacklist;
+            this.targetBlacklist = blacklist;
 
             AddPrecondition(GoapKey.hastarget, true);
             AddPrecondition(GoapKey.targetisalive, true);
@@ -66,7 +66,7 @@ namespace Core.Goals
         {
             initialTargetGuid = playerReader.TargetGuid;
             initialMinRange = playerReader.MinRange();
-            lastPlayerLocation = playerReader.PlayerLocation;
+            playerMap = playerReader.MapPos;
 
             combatUtil.Update();
 
@@ -107,8 +107,8 @@ namespace Core.Goals
             {
                 SetNextStuckTimeCheck();
 
-                Vector3 last = lastPlayerLocation;
-                lastPlayerLocation = playerReader.PlayerLocation;
+                Vector3 last = playerMap;
+                playerMap = playerReader.MapPos;
                 if (!combatUtil.IsPlayerMoving(last))
                 {
                     if (playerReader.LastUIError == UI_ERROR.ERR_AUTOFOLLOW_TOO_FAR)
@@ -154,7 +154,7 @@ namespace Core.Goals
 
                 if (playerReader.TargetGuid != initialTargetGuid)
                 {
-                    if (playerReader.Bits.HasTarget() && !blacklist.IsTargetBlacklisted()) // blacklist
+                    if (playerReader.Bits.HasTarget() && !targetBlacklist.Is()) // blacklist
                     {
                         if (playerReader.MinRange() < initialTargetMinRange)
                         {

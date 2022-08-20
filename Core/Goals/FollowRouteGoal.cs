@@ -18,8 +18,6 @@ namespace Core.Goals
 
         private const bool debug = false;
 
-        private const double DELAY_BEFORE_TARGET_SEARCH = 300;
-
         private readonly ILogger logger;
         private readonly ConfigurableInput input;
         private readonly Wait wait;
@@ -30,7 +28,7 @@ namespace Core.Goals
         private readonly MountHandler mountHandler;
         private readonly Navigation navigation;
 
-        private readonly IBlacklist blacklist;
+        private readonly IBlacklist targetBlacklist;
         private readonly TargetFinder targetFinder;
         private const int minMs = 500, maxMs = 1000;
         private const NpcNames NpcNameToFind = NpcNames.Enemy | NpcNames.Neutral;
@@ -42,7 +40,7 @@ namespace Core.Goals
         private readonly Thread? sideActivityThread;
         private CancellationTokenSource sideActivityCts;
 
-        private Vector3[] route;
+        private Vector3[] mapRoute;
 
         private bool shouldMount;
 
@@ -52,7 +50,7 @@ namespace Core.Goals
 
         public DateTime LastActive => navigation.LastActive;
 
-        public List<Vector3> PathingRoute()
+        public Vector3[] PathingRoute()
         {
             return navigation.TotalRoute;
         }
@@ -62,9 +60,9 @@ namespace Core.Goals
             return navigation.HasNext();
         }
 
-        public Vector3 NextPoint()
+        public Vector3 NextMapPoint()
         {
-            return navigation.NextPoint();
+            return navigation.NextMapPoint();
         }
 
         #endregion
@@ -80,11 +78,11 @@ namespace Core.Goals
             this.addonReader = addonReader;
             this.classConfig = classConfig;
             this.playerReader = addonReader.PlayerReader;
-            this.route = route;
+            this.mapRoute = route;
             this.npcNameFinder = npcNameFinder;
             this.mountHandler = mountHandler;
             this.targetFinder = targetFinder;
-            this.blacklist = blacklist;
+            this.targetBlacklist = blacklist;
 
             this.navigation = navigation;
             navigation.OnPathCalculated += Navigation_OnPathCalculated;
@@ -138,7 +136,7 @@ namespace Core.Goals
 
         private void Abort()
         {
-            if (!blacklist.IsTargetBlacklisted())
+            if (!targetBlacklist.Is())
                 navigation.StopMovement();
 
             navigation.Stop();
@@ -234,11 +232,6 @@ namespace Core.Goals
                 }
 
                 sideActivityManualReset.WaitOne();
-
-                while ((DateTime.UtcNow - onEnterTime).TotalMilliseconds < DELAY_BEFORE_TARGET_SEARCH)
-                {
-                    sideActivityManualReset.WaitOne();
-                }
             }
 
             if (logger.IsEnabled(LogLevel.Debug))
@@ -315,45 +308,45 @@ namespace Core.Goals
         {
             Log($"RefillWaypoints - findClosest:{onlyClosest} - ThereAndBack:{input.ClassConfig.PathThereAndBack}");
 
-            Vector3 player = playerReader.PlayerLocation;
-            Vector3[] path = route.ToArray();
+            Vector3 playerMap = playerReader.MapPos;
+            Vector3[] pathMap = mapRoute.ToArray();
 
-            float distanceToFirst = player.DistanceXYTo(path[0]);
-            float distanceToLast = player.DistanceXYTo(path[^1]);
+            float mapDistanceToFirst = playerMap.MapDistanceXYTo(pathMap[0]);
+            float mapDistanceToLast = playerMap.MapDistanceXYTo(pathMap[^1]);
 
-            if (distanceToLast < distanceToFirst)
+            if (mapDistanceToLast < mapDistanceToFirst)
             {
-                Array.Reverse(path);
+                Array.Reverse(pathMap);
             }
 
-            var closestPoint = path.OrderBy(p => player.DistanceXYTo(p)).First();
+            Vector3 mapClosestPoint = pathMap.OrderBy(p => playerMap.MapDistanceXYTo(p)).First();
             if (onlyClosest)
             {
-                var closestPath = new Vector3[] { closestPoint };
+                var closestPath = new Vector3[] { mapClosestPoint };
 
                 if (debug)
-                    LogDebug($"RefillWaypoints: Closest wayPoint: {closestPoint}");
+                    LogDebug($"RefillWaypoints: Closest wayPoint: {mapClosestPoint}");
                 navigation.SetWayPoints(closestPath);
 
                 return;
             }
 
-            int closestIndex = Array.IndexOf(path, closestPoint);
-            if (closestPoint == path[0] || closestPoint == path[^1])
+            int closestIndex = Array.IndexOf(pathMap, mapClosestPoint);
+            if (mapClosestPoint == pathMap[0] || mapClosestPoint == pathMap[^1])
             {
                 if (input.ClassConfig.PathThereAndBack)
                 {
-                    navigation.SetWayPoints(path);
+                    navigation.SetWayPoints(pathMap);
                 }
                 else
                 {
-                    Array.Reverse(path);
-                    navigation.SetWayPoints(path);
+                    Array.Reverse(pathMap);
+                    navigation.SetWayPoints(pathMap);
                 }
             }
             else
             {
-                Vector3[] points = path.Take(closestIndex).ToArray();
+                Vector3[] points = pathMap.Take(closestIndex).ToArray();
                 Array.Reverse(points);
                 Log($"RefillWaypoints - Set destination from closest to nearest endpoint - with {points.Length} waypoints");
                 navigation.SetWayPoints(points);
@@ -362,9 +355,9 @@ namespace Core.Goals
 
         #endregion
 
-        public void ReceivePath(Vector3[] newRoute)
+        public void ReceivePath(Vector3[] newMapRoute)
         {
-            route = newRoute;
+            mapRoute = newMapRoute;
         }
 
         private void RandomJump()

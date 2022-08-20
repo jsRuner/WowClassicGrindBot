@@ -203,9 +203,9 @@ namespace Core.GOAP
                 { GoapKey.pethastarget, playerReader.PetHasTarget && !playerReader.Bits.PetTargetIsDead() },
                 { GoapKey.targetisalive, playerReader.Bits.HasTarget() && !playerReader.Bits.TargetIsDead() },
                 { GoapKey.targettargetsus, (playerReader.Bits.HasTarget() && playerReader.TargetHealthPercentage() < 30) || playerReader.TargetTarget is // hacky way to keep attacking fleeing humanoids
-                    TargetTargetEnum.Me or
-                    TargetTargetEnum.Pet or
-                    TargetTargetEnum.PartyOrPet },
+                    UnitsTarget.Me or
+                    UnitsTarget.Pet or
+                    UnitsTarget.PartyOrPet },
                 { GoapKey.incombat, playerReader.Bits.PlayerInCombat() },
                 { GoapKey.ismounted,
                     (playerReader.Class == UnitClass.Druid &&
@@ -214,7 +214,7 @@ namespace Core.GOAP
                 { GoapKey.withinpullrange, playerReader.WithInPullRange() },
                 { GoapKey.incombatrange, playerReader.WithInCombatRange() },
                 { GoapKey.pulled, false },
-                { GoapKey.isdead, playerReader.Bits.DeadStatus() },
+                { GoapKey.isdead, playerReader.Bits.IsDead() },
                 { GoapKey.isswimming, playerReader.Bits.IsSwimming() },
                 { GoapKey.itemsbroken, playerReader.Bits.ItemsAreBroken() },
                 { GoapKey.producedcorpse, State.LastCombatKillCount > 0 },
@@ -257,11 +257,11 @@ namespace Core.GOAP
             }
             else if (e is CorpseEvent c)
             {
-                routeInfo.PoiList.Add(new RouteInfoPoi(c.Location, CorpseEvent.NAME, CorpseEvent.COLOR, c.Radius));
+                routeInfo.PoiList.Add(new RouteInfoPoi(c.MapLoc, CorpseEvent.NAME, CorpseEvent.COLOR, c.Radius));
             }
             else if (e is SkinCorpseEvent s)
             {
-                routeInfo.PoiList.Add(new RouteInfoPoi(s.Location, SkinCorpseEvent.NAME, SkinCorpseEvent.COLOR, s.Radius));
+                routeInfo.PoiList.Add(new RouteInfoPoi(s.MapLoc, SkinCorpseEvent.NAME, SkinCorpseEvent.COLOR, s.Radius));
             }
         }
 
@@ -296,17 +296,17 @@ namespace Core.GOAP
 
             int index = -1;
             float minDistance = float.MaxValue;
-            Vector3 playerLocation = addonReader.PlayerReader.PlayerLocation;
+            Vector3 playerMap = addonReader.PlayerReader.MapPos;
             for (int i = 0; i < routeInfo.PoiList.Count; i++)
             {
-                RouteInfoPoi? poi = routeInfo.PoiList[i];
-                if (poi?.Name != type)
+                RouteInfoPoi poi = routeInfo.PoiList[i];
+                if (poi.Name != type)
                     continue;
 
-                float min = playerLocation.DistanceXYTo(poi.Location);
-                if (min < minDistance)
+                float mapMin = playerMap.MapDistanceXYTo(poi.MapLoc);
+                if (mapMin < minDistance)
                 {
-                    minDistance = min;
+                    minDistance = mapMin;
                     index = i;
                 }
             }

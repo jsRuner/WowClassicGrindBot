@@ -138,7 +138,7 @@ namespace Core
             logger.LogDebug($"Woohoo, I have read the player class. You are a {AddonReader.PlayerReader.Race.ToStringF()} {AddonReader.PlayerReader.Class.ToStringF()}.");
 
             npcNameFinder = new(logger, WowScreen, npcNameFinderEvent);
-            npcNameTargeting = new(logger, cts, WowScreen, npcNameFinder, wowProcessInput);
+            npcNameTargeting = new(logger, cts, WowScreen, npcNameFinder, wowProcessInput, addonReader.PlayerReader, new NoBlacklist(), wait);
             WowScreen.AddDrawAction(npcNameFinder.ShowNames);
             WowScreen.AddDrawAction(npcNameTargeting.ShowClickPositions);
 
@@ -201,9 +201,9 @@ namespace Core
             {
                 _ = pather.DrawSphere(
                     new SphereArgs("Player",
-                    AddonReader.PlayerReader.PlayerLocation,
+                    AddonReader.PlayerReader.MapPos,
                     AddonReader.PlayerReader.Bits.PlayerInCombat() ? 1 : AddonReader.PlayerReader.Bits.HasTarget() ? 6 : 2,
-                    AddonReader.UIMapId.Value
+                    AddonReader.PlayerReader.UIMapId.Value
                 ));
 
                 cts.Token.WaitHandle.WaitOne(remotePathingTickMs);

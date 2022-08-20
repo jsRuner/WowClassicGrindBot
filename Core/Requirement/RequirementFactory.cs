@@ -90,6 +90,7 @@ namespace Core
 
                 // Range
                 { "InMeleeRange", playerReader.IsInMeleeRange },
+                { "InCloseMeleeRange", playerReader.InCloseMeleeRange },
                 { "InDeadZoneRange", playerReader.IsInDeadZone },
                 { "OutOfCombatRange", playerReader.OutOfCombatRange },
                 { "InCombatRange", playerReader.WithInCombatRange },
@@ -105,8 +106,8 @@ namespace Core
                 { "AutoShot", playerReader.Bits.SpellOn_AutoShot },
                 
                 // Temporary Enchants
-                { "HasMainHandEnchant", playerReader.Bits.MainHandEnchant_Active },
-                { "HasOffHandEnchant", playerReader.Bits.OffHandEnchant_Active },
+                { "HasMainHandEnchant", playerReader.Bits.HasMainHandTempEnchant },
+                { "HasOffHandEnchant", playerReader.Bits.HasOffHandTempEnchant },
                 
                 // Equipment - Bag
                 { "Items Broken", playerReader.Bits.ItemsAreBroken },

@@ -103,6 +103,8 @@ function DataToColor:RegisterEvents()
     DataToColor:RegisterEvent('ZONE_CHANGED_INDOORS', 'OnZoneChanged')
     DataToColor:RegisterEvent('ZONE_CHANGED_NEW_AREA', 'OnZoneChanged')
 
+    DataToColor:RegisterEvent('PLAYER_REGEN_ENABLED', 'OnLeftCombat')
+
     for i = 1, #ignoreErrorList do
         local text = _G[ignoreErrorList[i]]
         ignoreErrorListMessages[text] = i
@@ -231,11 +233,13 @@ function DataToColor:OnCombatEvent(...)
 
     if playerDamageTakenEvents[subEvent] and
         band(destFlags, COMBATLOG_OBJECT_TYPE_PLAYER_OR_PET) and
+        strlen(sourceGUID) > 0 and
         (destGUID == DataToColor.playerGUID or
         destGUID == DataToColor.petGUID or
         DataToColor.playerPetSummons[destGUID]) then
-        DataToColor.CombatDamageTakenQueue:push(DataToColor:getGuidFromUUID(sourceGUID))
         --DataToColor:Print("Damage Taken ", sourceGUID)
+        DataToColor.eligibleKillCredit[sourceGUID] = true
+        DataToColor.CombatDamageTakenQueue:push(DataToColor:getGuidFromUUID(sourceGUID))
     end
 
     if sourceGUID == DataToColor.playerGUID then
@@ -310,8 +314,9 @@ function DataToColor:OnCombatEvent(...)
 
         -- matches SWING_ RANGE_ SPELL_ but not SPELL_PERIODIC
         if playerDamageDone[subEvent] or playerDamageMiss[subEvent] then
-            DataToColor.CombatDamageDoneQueue:push(DataToColor:getGuidFromUUID(destGUID))
             --DataToColor:Print(subEvent, " ", destGUID)
+            DataToColor.eligibleKillCredit[destGUID] = true
+            DataToColor.CombatDamageDoneQueue:push(DataToColor:getGuidFromUUID(destGUID))
 
             if playerDamageMiss[subEvent] then
                 local missType = select(-2, ...)
@@ -345,7 +350,7 @@ function DataToColor:OnCombatEvent(...)
         end
     end
 
-    if unitDied[subEvent] then
+    if unitDied[subEvent] and DataToColor.eligibleKillCredit[destGUID] then
         if band(destFlags, COMBATLOG_OBJECT_TYPE_NPC) > 0 then
             DataToColor.CombatCreatureDiedQueue:push(DataToColor:getGuidFromUUID(destGUID))
             DataToColor.lastLoot = DataToColor.C.Loot.Corpse
@@ -436,7 +441,7 @@ function DataToColor:ActionbarSlotChanged(event, slot)
 end
 
 function DataToColor:CorpseInRangeEvent(event)
-    DataToColor.corpseInRange = 1
+    DataToColor.corpseInRange = 2
 end
 
 function DataToColor:CorpseOutOfRangeEvent(event)
@@ -465,6 +470,10 @@ function DataToColor:OnZoneChanged(event)
     DataToColor.map = C_Map.GetBestMapForUnit(DataToColor.C.unitPlayer)
 end
 
+function DataToColor:OnLeftCombat()
+    DataToColor.eligibleKillCredit = {}
+end
+
 local CORPSE_RETRIEVAL_DISTANCE = 40
 
 -----------------------------------------------------------------------------
@@ -490,7 +499,7 @@ end
 
 -- Declines/Accepts Party Invites.
 function DataToColor:HandlePartyInvite()
-    if DataToColor.globalTime % 50 == 1 then
+    if DataToColor.globalTime % 500 == 1 then
         -- Declines party invite if configured to decline
         if DataToColor.DATA_CONFIG.DECLINE_PARTY_REQUESTS then
             DeclineGroup()
@@ -505,7 +514,7 @@ end
 
 -- Repairs items if they are broken
 function DataToColor:RepairItems()
-    if DataToColor.globalTime % 50 == 1 then
+    if DataToColor.globalTime % 25 == 1 then
         local cost = GetRepairAllCost()
         if CanMerchantRepair() and cost > 0 and GetMoney() >= cost then
             RepairAllItems()

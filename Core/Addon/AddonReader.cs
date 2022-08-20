@@ -1,6 +1,9 @@
 using Core.Database;
+
 using Microsoft.Extensions.Logging;
+
 using SharedLib;
+
 using System;
 using System.Threading;
 
@@ -42,13 +45,11 @@ namespace Core
         public event Action? AddonDataChanged;
         public event Action? PlayerDeath;
 
-        private readonly WorldMapAreaDB WorldMapAreaDb;
+        public WorldMapAreaDB WorldMapAreaDb { get; }
 
         public ItemDB ItemDb { get; }
         public CreatureDB CreatureDb { get; }
         public AreaDB AreaDb { get; }
-
-        public RecordInt UIMapId { get; } = new(4);
 
         public RecordInt GlobalTime { get; } = new(98);
 
@@ -57,6 +58,9 @@ namespace Core
 
         private int lastTargetId = -1;
         public string TargetName { get; private set; } = string.Empty;
+
+        private int lastMouseOverId = -1;
+        public string MouseOverName { get; private set; } = string.Empty;
 
         public double AvgUpdateLatency { private set; get; }
         private double updateSum;
@@ -88,7 +92,7 @@ namespace Core
 
             this.SpellBookReader = new(71, spellDB);
 
-            this.PlayerReader = new(reader);
+            this.PlayerReader = new(reader, worldMapAreaDB);
             this.LevelTracker = new(this);
             this.TalentReader = new(72, PlayerReader, talentDB);
 
@@ -143,6 +147,12 @@ namespace Core
                     ? creature.Name : reader.GetString(16) + reader.GetString(17);
                 }
 
+                if (lastMouseOverId != PlayerReader.MouseOverId)
+                {
+                    MouseOverName = CreatureDb.Entries.TryGetValue(PlayerReader.MouseOverId, out Creature creature)
+                        ? creature.Name : string.Empty;
+                }
+
                 CombatLog.Update(reader, PlayerReader.Bits.PlayerInCombat());
 
                 BagReader.Read(reader);
@@ -160,8 +170,7 @@ namespace Core
                 TargetDebuffTimeReader.Read(reader);
                 TargetBuffTimeReader.Read(reader);
 
-                if (UIMapId.Updated(reader))
-                    AreaDb.Update(WorldMapAreaDb.GetAreaId(UIMapId.Value));
+                AreaDb.Update(WorldMapAreaDb.GetAreaId(PlayerReader.UIMapId.Value));
 
                 autoResetEvent.Set();
             }
@@ -181,8 +190,6 @@ namespace Core
         public void FullReset()
         {
             PlayerReader.Reset();
-
-            UIMapId.Reset();
 
             ActionBarCostReader.Reset();
             ActionBarCooldownReader.Reset();

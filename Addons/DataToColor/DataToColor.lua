@@ -67,6 +67,7 @@ local UnitXP = UnitXP
 local UnitXPMax = UnitXPMax
 local UnitExists = UnitExists
 local UnitGUID = UnitGUID
+local UnitClassification = UnitClassification
 
 local PowerType = Enum.PowerType
 
@@ -155,9 +156,14 @@ DataToColor.actionBarCooldownQueue = DataToColor.struct:new()
 DataToColor.spellBookQueue = DataToColor.Queue:new()
 DataToColor.talentQueue = DataToColor.Queue:new()
 
+DataToColor.eligibleKillCredit = {}
+
 DataToColor.CombatDamageDoneQueue = DataToColor.Queue:new()
+local lastDamageDone = 0
 DataToColor.CombatDamageTakenQueue = DataToColor.Queue:new()
+local lastDamaeTaken = 0
 DataToColor.CombatCreatureDiedQueue = DataToColor.Queue:new()
+local lastDied = 0
 DataToColor.CombatMissTypeQueue = DataToColor.Queue:new()
 
 DataToColor.playerPetSummons = {}
@@ -229,6 +235,8 @@ function DataToColor:Reset()
     DataToColor.petGUID = UnitGUID(DataToColor.C.unitPet)
     DataToColor.map = C_Map.GetBestMapForUnit(DataToColor.C.unitPlayer)
 
+    DataToColor.eligibleKillCredit = {}
+
     DataToColor.globalTime = 0
     DataToColor.lastLoot = 0
     DataToColor.uiErrorMessage = 0
@@ -246,6 +254,9 @@ function DataToColor:Reset()
     DataToColor.corpseInRange = 0
 
     globalCounter = 0
+    lastDied = 0
+    lastDamageDone = 0
+    lastDamaeTaken = 0
 
     bagCache = {}
 
@@ -271,18 +282,7 @@ function DataToColor:FushState()
 
     DataToColor:Reset()
 
-    DataToColor:InitEquipmentQueue()
-    DataToColor:InitBagQueue()
-
-    DataToColor:InitInventoryQueue(4)
-    DataToColor:InitInventoryQueue(3)
-    DataToColor:InitInventoryQueue(2)
-    DataToColor:InitInventoryQueue(1)
-    DataToColor:InitInventoryQueue(0)
-
-    DataToColor:InitActionBarCostQueue()
-    DataToColor:InitSpellBookQueue()
-    DataToColor:InitTalentQueue()
+    DataToColor:InitUpdateQueues()
 
     DataToColor:Print('Flush State')
 end
@@ -417,7 +417,9 @@ function DataToColor:CreateFrames(n)
         if valueCache[slot + 1] ~= value then
             valueCache[slot + 1] = value
             frames[slot + 1]:SetBackdropColor(func(self, value))
+            return true
         end
+        return false
     end
 
     local function UpdateGlobalTime(slot)
@@ -454,7 +456,7 @@ function DataToColor:CreateFrames(n)
             Pixel(int, UnitPowerMax(DataToColor.C.unitPlayer, nil), 12) -- either mana, rage, energy
             Pixel(int, UnitPower(DataToColor.C.unitPlayer, nil), 13) -- either mana, rage, energy
 
-            if(DataToColor.C.CHARACTER_CLASS_ID == 6) then -- death Knight
+            if DataToColor.C.CHARACTER_CLASS_ID == 6 then -- death Knight
 
                 local bloodRunes = 0
                 local unholyRunes = 0
@@ -619,23 +621,44 @@ function DataToColor:CreateFrames(n)
             Pixel(int, min(16, playerDebuffCount) * 1000000 + playerBuffCount * 10000 + targetDebuffCount * 100 + targetBuffCount, 55)
 
             if DataToColor.targetChanged then
-                Pixel(int, DataToColor:targetNpcId(), 56) -- target id
+                Pixel(int, DataToColor:NpcId(DataToColor.C.unitTarget), 56) -- target id
                 Pixel(int, DataToColor:getGuidFromUnit(DataToColor.C.unitTarget), 57)
             end
 
             Pixel(int, DataToColor:CastingInfoSpellId(DataToColor.C.unitTarget), 58) -- SpellId being cast by target
 
-            Pixel(int, DataToColor:TargetOfTargetAsNumber(), 59)
+            Pixel(int,
+                10 * DataToColor:UnitsTargetAsNumber(DataToColor.C.unitmouseover, DataToColor.C.unitmouseovertarget) +
+                DataToColor:UnitsTargetAsNumber(DataToColor.C.unitTarget, DataToColor.C.unitTargetTarget),
+                59)
 
             Pixel(int, DataToColor.lastAutoShot, 60)
             Pixel(int, DataToColor.lastMainHandMeleeSwing, 61)
             Pixel(int, DataToColor.lastCastEvent, 62)
             Pixel(int, DataToColor.lastCastSpellId, 63)
 
+            if globalCounter % COMBAT_LOG_ITERATION_FRAME_CHANGE_RATE == 0 or
+                globalCounter - lastDied > COMBAT_LOG_ITERATION_FRAME_CHANGE_RATE then
+                if Pixel(int, DataToColor.CombatCreatureDiedQueue:shift() or 0, 66) then
+                    lastDied = globalCounter
+                end
+            end
+
+            if globalCounter % COMBAT_LOG_ITERATION_FRAME_CHANGE_RATE == 0 or
+                globalCounter - lastDamageDone > COMBAT_LOG_ITERATION_FRAME_CHANGE_RATE then
+                if Pixel(int, DataToColor.CombatDamageDoneQueue:shift() or 0, 64) then
+                    lastDamageDone = globalCounter
+                end
+            end
+
+            if globalCounter % COMBAT_LOG_ITERATION_FRAME_CHANGE_RATE == 0 or
+                globalCounter - lastDamaeTaken > COMBAT_LOG_ITERATION_FRAME_CHANGE_RATE then
+                if Pixel(int, DataToColor.CombatDamageTakenQueue:shift() or 0, 65) then
+                    lastDamaeTaken = globalCounter
+                end
+            end
+
             if globalCounter % COMBAT_LOG_ITERATION_FRAME_CHANGE_RATE == 0 then
-                Pixel(int, DataToColor.CombatDamageDoneQueue:shift() or 0, 64)
-                Pixel(int, DataToColor.CombatDamageTakenQueue:shift() or 0, 65)
-                Pixel(int, DataToColor.CombatCreatureDiedQueue:shift() or 0, 66)
                 Pixel(int, DataToColor.CombatMissTypeQueue:shift() or 0, 67)
             end
 
@@ -737,8 +760,18 @@ function DataToColor:CreateFrames(n)
                     Pixel(int, 0, 83)
                     Pixel(int, 0, 84)
                 end
-
             end
+
+            local mouseoverLevel = UnitLevel(DataToColor.C.unitmouseover)
+            if mouseoverLevel == -1 then
+                mouseoverLevel = playerLevel + 10
+            end
+            Pixel(int, mouseoverLevel * 100 + DataToColor.unitClassification[UnitClassification(DataToColor.C.unitmouseover)], 85)
+
+            Pixel(int, DataToColor:NpcId(DataToColor.C.unitmouseover), 86)
+            Pixel(int, DataToColor:getGuidFromUnit(DataToColor.C.unitmouseover), 87)
+
+            -- 88
 
             -- 94 last cast GCD
             Pixel(int, DataToColor.lastCastGCD, 94)

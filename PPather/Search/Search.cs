@@ -32,38 +32,47 @@ namespace PPather
 
         public Vector4 CreateWorldLocation(float x, float y, float z, int mapId)
         {
-            float zTerrain = GetZValueAt(x, y,
+            float zTerrain = GetZValueAt(x, y, z,
                 new int[] { ChunkedTriangleCollection.TriangleTerrain });
 
-            float zWater = GetZValueAt(x, y,
+            float zWater = GetZValueAt(x, y, z,
                 new int[] { ChunkedTriangleCollection.TriangleFlagDeepWater });
 
             if (zWater > zTerrain)
             {
-                return new Vector4(x, y, zWater - toonHeight, mapId);
+                return new Vector4(x, y, zWater, mapId);
             }
 
-            float zModel = GetZValueAt(x, y,
+            float zModel = GetZValueAt(x, y, z,
             new int[] { ChunkedTriangleCollection.TriangleFlagModel, ChunkedTriangleCollection.TriangleFlagObject });
 
             if (zModel != float.MinValue)
             {
-                if (MathF.Abs(zModel - zTerrain) > toonHeight)
+                if (MathF.Abs(zModel - zTerrain) > toonHeight / 2)
                 {
-                    return new Vector4(x, y, zTerrain - toonHeight, mapId);
+                    return new Vector4(x, y, zTerrain, mapId);
                 }
                 else
                 {
-                    return new Vector4(x, y, zModel - toonHeight, mapId);
+                    return new Vector4(x, y, zModel, mapId);
                 }
             }
 
-            return new Vector4(x, y, zTerrain - toonHeight, mapId);
+            return new Vector4(x, y, zTerrain, mapId);
         }
 
-        private float GetZValueAt(float x, float y, int[] allowedModels)
+        private float GetZValueAt(float x, float y, float z, int[] allowedModels)
         {
-            if (PathGraph.triangleWorld.FindStandableAt1(x, y, -1000, 2000, out float z1, out int flags1, toonHeight, toonSize, true, allowedModels))
+            float min = -1000;
+            float max = 2000;
+
+            if (z != 0)
+            {
+                min = z - 1000;
+                max = z + 2000;
+            }
+
+            if (PathGraph.triangleWorld.FindStandableAt1(x, y, min, max, out float z1, out int flags1, toonHeight, toonSize, true, allowedModels))
             {
                 return z1;
             }
@@ -86,9 +95,6 @@ namespace PPather
 
             // tell the pathgraph which type of search to do
             PathGraph.searchScoreSpot = searchType;
-
-            //slow down the search if required.
-            //PathGraph.sleepMSBetweenSpots = 0;
 
             try
             {

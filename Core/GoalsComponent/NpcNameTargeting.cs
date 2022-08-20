@@ -6,6 +6,7 @@ using SharedLib.Extensions;
 using SharedLib.NpcFinder;
 using Game;
 using Microsoft.Extensions.Logging;
+using System.Collections.Generic;
 
 namespace Core.Goals
 {
@@ -18,8 +19,15 @@ namespace Core.Goals
         private readonly IWowScreen wowScreen;
         private readonly NpcNameFinder npcNameFinder;
         private readonly IMouseInput input;
+        private readonly IMouseOverReader mouseOverReader;
+        private readonly Wait wait;
+
+        private IBlacklist mouseOverBlacklist;
 
         private readonly Pen whitePen;
+
+        private readonly HashSet<int> blacklistIndexes;
+        private int npcCount = -1;
 
         public int NpcCount => npcNameFinder.NpcCount;
 
@@ -27,22 +35,27 @@ namespace Core.Goals
         public Point[] locFindBy { get; }
 
         public NpcNameTargeting(ILogger logger, CancellationTokenSource cts,
-            IWowScreen wowScreen, NpcNameFinder npcNameFinder, IMouseInput input)
+            IWowScreen wowScreen, NpcNameFinder npcNameFinder, IMouseInput input,
+            IMouseOverReader mouseOverReader, IBlacklist blacklist, Wait wait)
         {
             this.logger = logger;
             ct = cts.Token;
             this.wowScreen = wowScreen;
             this.npcNameFinder = npcNameFinder;
             this.input = input;
+            this.mouseOverReader = mouseOverReader;
+            this.mouseOverBlacklist = blacklist;
+            this.wait = wait;
 
             whitePen = new Pen(Color.White, 3);
+
+            blacklistIndexes = new();
 
             locTargeting = new Point[]
             {
                 new Point(0, 0),
-                new Point(0, -10),
-                new Point(-15, 15).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-                new Point(15, 15).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
+                new Point(-5, 15).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
+                new Point(5, 15).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
             };
 
             locFindBy = new Point[]
@@ -50,20 +63,29 @@ namespace Core.Goals
                 new Point(0, 0),
                 new Point(0, 15).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
 
-                new Point(0, 25).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-                new Point(-15, 25).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-                new Point(15, 25).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-
                 new Point(0, 50).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
                 new Point(-15, 50).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
                 new Point(15, 50).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
 
-                new Point(0, 75).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-                new Point(-15, 75).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-                new Point(15, 75).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
+                new Point(0, 100).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
+                new Point(-15, 100).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
+                new Point(15, 100).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
 
-                new Point(0, 125).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
+                new Point(0, 150).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
+                new Point(-15, 150).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
+                new Point(15, 150).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
+
+                new Point(0,   200).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
+                new Point(-15, 200).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
+                new Point(-15, 200).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
             };
+        }
+
+        public void UpdateBlacklist(IBlacklist blacklist)
+        {
+            this.mouseOverBlacklist = blacklist;
+
+            logger.LogInformation($"{nameof(NpcNameTargeting)}: set blacklist to {blacklist.GetType().Name}");
         }
 
         public void ChangeNpcType(NpcNames npcNames)
@@ -72,6 +94,12 @@ namespace Core.Goals
             wowScreen.Enabled = npcNames != NpcNames.None;
             if (changed)
                 ct.WaitHandle.WaitOne(5); // BotController ScreenshotThread 4ms delay when idle
+        }
+
+        public void Reset()
+        {
+            npcCount = -1;
+            blacklistIndexes.Clear();
         }
 
         public void WaitForUpdate()
@@ -84,9 +112,18 @@ namespace Core.Goals
             return npcNameFinder.NpcCount > 0;
         }
 
-        public bool InteractFirst(CancellationToken ct)
+        public bool AquireNonBlacklisted(CancellationToken ct)
         {
-            NpcPosition npc = npcNameFinder.Npcs.First();
+            if (npcCount != NpcCount)
+            {
+                npcCount = NpcCount;
+                blacklistIndexes.Clear();
+            }
+
+            int index = blacklistIndexes.Count;
+            if (index >= npcCount)
+                return false;
+            NpcPosition npc = npcNameFinder.Npcs.ElementAt(index);
 
             for (int i = 0; i < locTargeting.Length; i++)
             {
@@ -102,8 +139,21 @@ namespace Core.Goals
                 CursorClassifier.Classify(out CursorType cls);
                 if (cls is CursorType.Kill or CursorType.Vendor)
                 {
+                    wait.Update();
+                    bool blacklisted = false;
+                    if (mouseOverReader.MouseOverId == 0 || (blacklisted = mouseOverBlacklist.Is()))
+                    {
+                        if (blacklisted)
+                        {
+                            //logger.LogInformation($"> NPCs {index} added to blacklist {mouseOverReader.MouseOverId} - {npc.Rect}");
+                            blacklistIndexes.Add(index);
+                        }
+
+                        return false;
+                    }
+
+                    logger.LogInformation($"> mouseover NPC found: {mouseOverReader.MouseOverId} - {npc.Rect}");
                     input.InteractMouseOver();
-                    logger.LogInformation($"> NPCs found: {npc.Rect}");
                     return true;
                 }
             }
@@ -134,8 +184,8 @@ namespace Core.Goals
                     CursorClassifier.Classify(out CursorType cls);
                     if (cursor.Contains(cls))
                     {
-                        input.InteractMouseOver();
                         ct.WaitHandle.WaitOne(FAST_DELAY);
+                        input.InteractMouseOver();
                         logger.LogInformation($"> NPCs found: {npc.Rect}");
                         return true;
                     }

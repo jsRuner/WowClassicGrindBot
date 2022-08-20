@@ -53,11 +53,11 @@ local UnitAttackSpeed = UnitAttackSpeed
 local UnitAffectingCombat = UnitAffectingCombat
 local GetWeaponEnchantInfo = GetWeaponEnchantInfo
 local UnitIsDead = UnitIsDead
-local UnitClassification = UnitClassification
 local UnitIsPlayer = UnitIsPlayer
 local UnitName = UnitName
 local UnitIsDeadOrGhost = UnitIsDeadOrGhost
 local UnitCharacterPoints = UnitCharacterPoints
+local UnitPlayerControlled = UnitPlayerControlled
 local GetShapeshiftForm = GetShapeshiftForm
 local GetShapeshiftFormInfo = GetShapeshiftFormInfo
 local GetInventoryItemBroken = GetInventoryItemBroken
@@ -100,70 +100,67 @@ function DataToColor:GetPosition()
     return 0, 0
 end
 
--- Returns bitmask values.
--- base2(1, 4) --> returns 16
--- base2(0, 9) --> returns 0
-local function base2(number, power)
-    return number > 0 and 2 ^ power or 0
-end
-
-local function sum24(number)
-    return number % 0x1000000
-end
-
 -- Base 2 converter for up to 24 boolean values to a single pixel square.
 function DataToColor:Bits1()
     -- 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384
 
     local mainHandEnchant, _, _, _, offHandEnchant = GetWeaponEnchantInfo()
 
-    return base2(UnitAffectingCombat(DataToColor.C.unitTarget) and 1 or 0, 0) +
-        base2(UnitIsDead(DataToColor.C.unitTarget) and 1 or 0, 1) +
-        base2(UnitIsDeadOrGhost(DataToColor.C.unitPlayer) and 1 or 0, 2) +
-        base2(UnitCharacterPoints(DataToColor.C.unitPlayer) > 0 and 1 or 0, 3) +
-        -- 4 unused
-        base2(DataToColor:isHostile(DataToColor.C.unitTarget), 5) +
-        base2(UnitIsVisible(DataToColor.C.unitPet) and not UnitIsDead(DataToColor.C.unitPet) and 1 or 0, 6) +
-        base2(mainHandEnchant and 1 or 0, 7) +
-        base2(offHandEnchant and 1 or 0, 8) +
-        base2(DataToColor:GetInventoryBroken(), 9) +
-        base2(UnitOnTaxi(DataToColor.C.unitPlayer) and 1 or 0, 10) +
-        base2(IsSwimming() and 1 or 0, 11) +
-        base2(GetPetHappiness() == 3 and 1 or 0, 12) +
-        base2(GetInventoryItemCount(DataToColor.C.unitPlayer, ammoSlot) > 0 and 1 or 0, 13) +
-        base2(UnitAffectingCombat(DataToColor.C.unitPlayer) and 1 or 0, 14) +
-        base2(DataToColor:IsTargetOfTargetPlayerOrPet(), 15) +
-        base2(IsAutoRepeatSpell(DataToColor.C.Spell.AutoShotId) and 1 or 0, 16) +
-        base2(UnitExists(DataToColor.C.unitTarget) and 1 or 0, 17) +
-        base2(IsMounted() and 1 or 0, 18) +
-        base2(IsAutoRepeatSpell(DataToColor.C.Spell.ShootId) and 1 or 0, 19) +
-        base2(IsCurrentSpell(DataToColor.C.Spell.AttackId) and 1 or 0, 20) +
-        base2(UnitIsPlayer(DataToColor.C.unitTarget) and 1 or 0, 21) +
-        base2(UnitIsTapDenied(DataToColor.C.unitTarget) and 1 or 0, 22) +
-        base2(IsFalling() and 1 or 0, 23)
+    return
+        (UnitAffectingCombat(DataToColor.C.unitTarget) and 1 or 0) +
+        (UnitIsDead(DataToColor.C.unitTarget) and 2 or 0) ^ 1 +
+        (UnitIsDeadOrGhost(DataToColor.C.unitPlayer) and 2 or 0) ^ 2 +
+        (UnitCharacterPoints(DataToColor.C.unitPlayer) > 0 and 2 or 0) ^ 3 +
+        (UnitExists(DataToColor.C.unitmouseover) and 2 or 0) ^ 4 +
+        ((UnitReaction(DataToColor.C.unitPlayer, DataToColor.C.unitTarget) or 0) <= 4 and 2 or 0) ^ 5 + -- isHostile
+        (UnitIsVisible(DataToColor.C.unitPet) and not UnitIsDead(DataToColor.C.unitPet) and 2 or 0) ^ 6 +
+        (mainHandEnchant and 2 or 0) ^ 7 +
+        (offHandEnchant and 2 or 0) ^ 8 +
+        DataToColor:GetInventoryBroken() ^ 9 +
+        (UnitOnTaxi(DataToColor.C.unitPlayer) and 2 or 0) ^ 10 +
+        (IsSwimming() and 2 or 0) ^ 11 +
+        (GetPetHappiness() == 3 and 2 or 0) ^ 12 +
+        (GetInventoryItemCount(DataToColor.C.unitPlayer, ammoSlot) > 0 and 2 or 0) ^ 13 +
+        (UnitAffectingCombat(DataToColor.C.unitPlayer) and 2 or 0) ^ 14 +
+        (DataToColor:IsUnitsTargetIsPlayerOrPet(DataToColor.C.unitTarget, DataToColor.C.unitTargetTarget) and 2 or 0) ^ 15 +
+        (IsAutoRepeatSpell(DataToColor.C.Spell.AutoShotId) and 2 or 0) ^ 16 +
+        (UnitExists(DataToColor.C.unitTarget) and 2 or 0) ^ 17 +
+        (IsMounted() and 2 or 0) ^ 18 +
+        (IsAutoRepeatSpell(DataToColor.C.Spell.ShootId) and 2 or 0) ^ 19 +
+        (IsCurrentSpell(DataToColor.C.Spell.AttackId) and 2 or 0) ^ 20 +
+        (UnitIsPlayer(DataToColor.C.unitTarget) and 2 or 0) ^ 21 +
+        (UnitIsTapDenied(DataToColor.C.unitTarget) and 2 or 0) ^ 22 +
+        (IsFalling() and 2 or 0) ^ 23
 end
 
 function DataToColor:Bits2()
     local type, _, _, scale = GetMirrorTimerInfo(2)
     return
-        base2(type == DataToColor.C.MIRRORTIMER.BREATH and scale < 0 and 1 or 0, 0) +
-        base2(DataToColor.corpseInRange, 1) +
-        base2(IsIndoors() and 1 or 0, 2) +
-        base2(UnitExists(DataToColor.C.unitFocus) and 1 or 0, 3) +
-        base2(UnitAffectingCombat(DataToColor.C.unitFocus) and 1 or 0, 4) +
-        base2(UnitExists(DataToColor.C.unitFocusTarget) and 1 or 0, 5) +
-        base2(UnitAffectingCombat(DataToColor.C.unitFocusTarget) and 1 or 0, 6) +
-        base2(DataToColor:isHostile(DataToColor.C.unitFocusTarget), 7) +
-        -- 8 unused
-        base2(UnitIsDead(DataToColor.C.unitPetTarget) and 1 or 0, 9) +
-        base2(IsStealthed() and 1 or 0, 10) +
-        base2(UnitIsTrivial(DataToColor.C.unitTarget) and 1 or 0, 11)
+        (type == DataToColor.C.MIRRORTIMER.BREATH and scale < 0 and 1 or 0) +
+        DataToColor.corpseInRange ^ 1 +
+        (IsIndoors() and 2 or 0) ^ 2 +
+        (UnitExists(DataToColor.C.unitFocus) and 2 or 0) ^ 3 +
+        (UnitAffectingCombat(DataToColor.C.unitFocus) and 2 or 0) ^ 4 +
+        (UnitExists(DataToColor.C.unitFocusTarget) and 2 or 0) ^ 5 +
+        (UnitAffectingCombat(DataToColor.C.unitFocusTarget) and 2 or 0) ^ 6 +
+        ((UnitReaction(DataToColor.C.unitPlayer, DataToColor.C.unitFocusTarget) or 0) <= 4 and 2 or 0) ^ 7 + -- isHostile
+        (UnitIsDead(DataToColor.C.unitmouseover) and 2 or 0) ^ 8 +
+        (UnitIsDead(DataToColor.C.unitPetTarget) and 2 or 0) ^ 9 +
+        (IsStealthed() and 2 or 0) ^ 10 +
+        (UnitIsTrivial(DataToColor.C.unitTarget) and 2 or 0) ^ 11 +
+        (UnitIsTrivial(DataToColor.C.unitmouseover) and 2 or 0) ^ 12 +
+        (UnitIsTapDenied(DataToColor.C.unitmouseover) and 2 or 0) ^ 13 +
+        ((UnitReaction(DataToColor.C.unitPlayer, DataToColor.C.unitmouseover) or 0) <= 4 and 2 or 0) ^ 14 + -- isHostile
+        (UnitIsPlayer(DataToColor.C.unitmouseover) and 2 or 0) ^ 15 +
+        (DataToColor:IsUnitsTargetIsPlayerOrPet(DataToColor.C.unitmouseover, DataToColor.C.unitmouseovertarget) and 2 or 0) ^ 16 +
+        (UnitPlayerControlled(DataToColor.C.unitmouseover) and 2 or 0) ^ 17 +
+        (UnitPlayerControlled(DataToColor.C.unitTarget) and 2 or 0) ^ 18
 end
 
 function DataToColor:CustomTrigger(t)
-    local v = 0
-    for i = 0, 23 do
-        v = v + base2(t[i], i)
+    local v = t[0]
+    for i = 1, 23 do
+        v = v + (t[i] ^ i)
     end
     return v
 end
@@ -186,7 +183,7 @@ function DataToColor:getAuraMaskForClass(func, unitId, table)
                 break
             end
             if v[texture] or find(name, v[1]) then
-                mask = mask + base2(1, k)
+                mask = mask + (2 ^ k)
                 break
             end
         end
@@ -253,11 +250,7 @@ function DataToColor:GetTargetName(partition)
 end
 
 function DataToColor:CastingInfoSpellId(unitId)
-
-    local UnitCastingInfo = { DataToColor.UnitCastingInfo(unitId) }
-    local startTime = UnitCastingInfo[4]
-    local endTime = UnitCastingInfo[5]
-    local spellID = UnitCastingInfo[#UnitCastingInfo]
+    local _, _, _, startTime, endTime, _, _, _, spellID = DataToColor.UnitCastingInfo(unitId)
 
     if spellID ~= nil then
         if unitId == DataToColor.C.unitPlayer and startTime ~= DataToColor.lastCastStartTime then
@@ -268,11 +261,7 @@ function DataToColor:CastingInfoSpellId(unitId)
         return spellID
     end
 
-    local UnitChannelInfo = { DataToColor.UnitChannelInfo(unitId) }
-    startTime = UnitChannelInfo[4]
-    endTime = UnitChannelInfo[5]
-    spellID = UnitChannelInfo[#UnitChannelInfo]
-
+    local _, _, _, startTime, endTime, _, _, spellID = DataToColor.UnitChannelInfo(unitId)
     if spellID ~= nil then
         if unitId == DataToColor.C.unitPlayer and startTime ~= DataToColor.lastCastStartTime then
             DataToColor.lastCastStartTime = startTime
@@ -291,21 +280,13 @@ end
 
 --
 
-function DataToColor:isHostile(unit)
-    local hostile = UnitReaction(DataToColor.C.unitPlayer, unit)
-    if hostile ~= nil and hostile <= 4 then
-        return 1
-    end
-    return 0
-end
-
 function DataToColor:getRange()
     local min, max = Range:GetRange(DataToColor.C.unitTarget)
     return (max or 0) * 1000 + (min or 0)
 end
 
-function DataToColor:targetNpcId()
-    local guid = UnitGUID(DataToColor.C.unitTarget) or ""
+function DataToColor:NpcId(unit)
+    local guid = UnitGUID(unit) or ""
     local id = tonumber(guid:match("-(%d+)-%x+$"), 10)
     if id and guid:match("%a+") ~= "Player" then
         return id
@@ -332,14 +313,14 @@ function DataToColor:uniqueGuid(npcId, spawn)
     local spawnIndex = band(tonumber(sub(spawn, 1, 5), 16), 0xffff8)
 
     local dd = date("*t", spawnEpochOffset)
-    return sum24(
+    return (
         dd.day +
         dd.hour +
         dd.min +
         dd.sec +
         npcId +
         spawnIndex
-    )
+    ) % 0x1000000
 end
 
 local offsetEnumPowerType = 2
@@ -480,7 +461,7 @@ function DataToColor:getAvgEquipmentDurability()
         c = c + (cc or 0)
         m = m + (mm or 0)
     end
-    return max(0, floor(c * 100 / m) - 1) -- 0-99
+    return max(0, floor((c + 1)* 100 / (m + 1)) - 1) -- 0-99
 end
 
 -----------------------------------------------------------------
@@ -506,45 +487,45 @@ end
 function DataToColor:GetInventoryBroken()
     for i = 1, 18 do
         if GetInventoryItemBroken(DataToColor.C.unitPlayer, i) then
-            return 1
+            return 2
         end
     end
     return 0
 end
 
-function DataToColor:TargetOfTargetAsNumber()
-    if not (UnitName(DataToColor.C.unitTargetTarget)) then return 2 end -- target has no target
-    if DataToColor.C.CHARACTER_NAME == UnitName(DataToColor.C.unitTarget) then return 0 end -- targeting self
-    if UnitName(DataToColor.C.unitPet) == UnitName(DataToColor.C.unitTargetTarget) then return 4 end -- targetting my pet
-    if DataToColor.playerPetSummons[UnitGUID(DataToColor.C.unitTargetTarget)] then return 4 end
-    if DataToColor.C.CHARACTER_NAME == UnitName(DataToColor.C.unitTargetTarget) then return 1 end -- targetting me
-    if UnitName(DataToColor.C.unitPet) == UnitName(DataToColor.C.unitTarget) and
-        UnitName(DataToColor.C.unitTargetTarget) ~= nil then return 5 end
-    if IsInGroup() and DataToColor:TargetTargetsPartyOrPet() then return 6 end
+function DataToColor:UnitsTargetAsNumber(unit, unittarget)
+    if not (UnitName(unittarget)) then return 2 end -- target has no target
+    if DataToColor.C.CHARACTER_NAME == UnitName(unit) then return 0 end -- targeting self
+    if UnitName(DataToColor.C.unitPet) == UnitName(unittarget) then return 4 end -- targetting my pet
+    if DataToColor.playerPetSummons[UnitGUID(unittarget)] then return 4 end
+    if DataToColor.C.CHARACTER_NAME == UnitName(unittarget) then return 1 end -- targetting me
+    if UnitName(DataToColor.C.unitPet) == UnitName(unit) and
+        UnitName(unittarget) ~= nil then return 5 end
+    if IsInGroup() and DataToColor:UnitTargetsPartyOrPet(unittarget) then return 6 end
     return 3
 end
 
-function DataToColor:TargetTargetsPartyOrPet()
+function DataToColor:UnitTargetsPartyOrPet(unittarget)
     for i = 1, 4 do
         local unit = DataToColor.C.unitParty .. i
         if UnitExists(unit) == false then
             return false
         end
         local name = UnitName(unit)
-        if name == UnitName(DataToColor.C.unitTargetTarget) then return true end
+        if name == UnitName(unittarget) then return true end
 
         unit = DataToColor.C.unitParty .. i .. DataToColor.C.unitPet
         if UnitExists(unit) == false then
             return false
         end
         name = UnitName(unit)
-        if name == UnitName(DataToColor.C.unitTargetTarget) then return true end
+        if name == UnitName(unittarget) then return true end
     end
     return false
 end
 
 -- Returns true if target of our target is us
-function DataToColor:IsTargetOfTargetPlayerOrPet()
-    local x = DataToColor:TargetOfTargetAsNumber()
-    if x == 1 or x == 4 then return 1 else return 0 end
+function DataToColor:IsUnitsTargetIsPlayerOrPet(unit, unittarget)
+    local x = DataToColor:UnitsTargetAsNumber(unit, unittarget)
+    return x == 1 or x == 4
 end

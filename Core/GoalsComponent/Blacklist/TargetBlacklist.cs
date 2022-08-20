@@ -6,7 +6,7 @@ using SharedLib.Extensions;
 
 namespace Core
 {
-    public partial class Blacklist : IBlacklist
+    public partial class TargetBlacklist : IBlacklist
     {
         private readonly string[] blacklist;
 
@@ -20,7 +20,7 @@ namespace Core
 
         private int lastGuid;
 
-        public Blacklist(ILogger logger, AddonReader addonReader, ClassConfiguration classConfig)
+        public TargetBlacklist(ILogger logger, AddonReader addonReader, ClassConfiguration classConfig)
         {
             this.addonReader = addonReader;
             playerReader = addonReader.PlayerReader;
@@ -33,13 +33,13 @@ namespace Core
 
             this.blacklist = classConfig.Blacklist;
 
-            logger.LogInformation($"[{nameof(Blacklist)}] {nameof(classConfig.TargetMask)}: {string.Join(", ", targetMask.GetIndividualFlags())}");
+            logger.LogInformation($"[{nameof(TargetBlacklist)}] {nameof(classConfig.TargetMask)}: {string.Join(", ", targetMask.GetIndividualFlags())}");
 
             if (blacklist.Length > 0)
-                logger.LogInformation($"[{nameof(Blacklist)}] Name: {string.Join(", ", blacklist)}");
+                logger.LogInformation($"[{nameof(TargetBlacklist)}] Name: {string.Join(", ", blacklist)}");
         }
 
-        public bool IsTargetBlacklisted()
+        public bool Is()
         {
             if (!playerReader.Bits.HasTarget())
             {
@@ -73,18 +73,18 @@ namespace Core
                 return true; // ignore non white listed unit classification
             }
 
-            if (playerReader.Bits.TargetIsPlayer())
+            if (playerReader.Bits.TargetIsPlayer() || playerReader.Bits.TargetIsPlayerControlled())
             {
                 if (lastGuid != playerReader.TargetGuid)
                 {
-                    LogPlayer(logger, playerReader.TargetId, playerReader.TargetGuid, addonReader.TargetName);
+                    LogPlayerOrPet(logger, playerReader.TargetId, playerReader.TargetGuid, addonReader.TargetName);
                     lastGuid = playerReader.TargetGuid;
                 }
 
-                return true; // ignore players
+                return true; // ignore players and pets
             }
 
-            if (!playerReader.Bits.TargetIsDead() && playerReader.Bits.IsTagged())
+            if (!playerReader.Bits.TargetIsDead() && playerReader.Bits.TargetIsTagged())
             {
                 if (lastGuid != playerReader.TargetGuid)
                 {
@@ -158,8 +158,8 @@ namespace Core
         [LoggerMessage(
             EventId = 60,
             Level = LogLevel.Warning,
-            Message = "Blacklist ({id},{guid},{name}) is player!")]
-        static partial void LogPlayer(ILogger logger, int id, int guid, string name);
+            Message = "Blacklist ({id},{guid},{name}) is player or pet!")]
+        static partial void LogPlayerOrPet(ILogger logger, int id, int guid, string name);
 
         [LoggerMessage(
             EventId = 61,

@@ -1,15 +1,19 @@
-﻿using System;
-using System.Collections.Specialized;
+﻿using System.Collections.Specialized;
 using System.Numerics;
+
+using SharedLib;
 
 namespace Core
 {
-    public partial class PlayerReader
+    public partial class PlayerReader : IMouseOverReader
     {
         private readonly IAddonDataProvider reader;
+        private readonly WorldMapAreaDB worldMapAreaDB;
 
-        public PlayerReader(IAddonDataProvider reader)
+        public PlayerReader(IAddonDataProvider reader, WorldMapAreaDB mapAreaDB)
         {
+            this.worldMapAreaDB = mapAreaDB;
+
             this.reader = reader;
             Bits = new(8, 9);
             SpellInRange = new(40);
@@ -19,18 +23,27 @@ namespace Core
             CustomTrigger1 = new(reader.GetInt(74));
         }
 
-        public Vector3 PlayerLocation => new(XCoord, YCoord, ZCoord);
+        public WorldMapArea WorldMapArea { get; private set; }
 
-        public float XCoord => reader.GetFixed(1) * 10;
-        public float YCoord => reader.GetFixed(2) * 10;
-        public float ZCoord { get; set; }
+        public Vector3 MapPos => new(MapX, MapY, WorldPosZ);
+        public Vector3 WorldPos => worldMapAreaDB.ToWorld_FlipXY(UIMapId.Value, MapPos);
+
+        public float WorldPosZ { get; set; } // MapZ not exists. Alias for WorldLoc.Z
+
+        public float MapX => reader.GetFixed(1) * 10;
+        public float MapY => reader.GetFixed(2) * 10;
+        
         public float Direction => reader.GetFixed(3);
+
+        public RecordInt UIMapId { get; } = new(4);
+
+        public int MapId { get; private set; }
 
         public RecordInt Level { get; } = new(5);
 
-        public Vector3 CorpseLocation => new(CorpseX, CorpseY, 0);
-        public float CorpseX => reader.GetFixed(6) * 10;
-        public float CorpseY => reader.GetFixed(7) * 10;
+        public Vector3 CorpseMapPos => new(CorpseMapX, CorpseMapY, 0);
+        public float CorpseMapX => reader.GetFixed(6) * 10;
+        public float CorpseMapY => reader.GetFixed(7) * 10;
 
         public AddonBits Bits { get; }
 
@@ -89,6 +102,8 @@ namespace Core
         public int MaxRange() => reader.GetInt(49) / 1000 % 1000;
 
         public bool IsInMeleeRange() => MinRange() == 0 && MaxRange() != 0 && MaxRange() <= 5;
+        public bool InCloseMeleeRange() => MinRange() == 0 && MaxRange() <= 2;
+
         public bool IsInDeadZone() => MinRange() >= 5 && SpellInRange.Target_Trade; // between 5-8 yard - hunter and warrior
 
         public RecordInt PlayerXp { get; } = new(50);
@@ -114,10 +129,12 @@ namespace Core
         public int SpellBeingCastByTarget => reader.GetInt(58);
         public bool IsTargetCasting() => SpellBeingCastByTarget != 0;
 
-        public TargetTargetEnum TargetTarget => (TargetTargetEnum)reader.GetInt(59);
-        public bool TargetsMe() => TargetTarget == TargetTargetEnum.Me;
-        public bool TargetsPet() => TargetTarget == TargetTargetEnum.Pet;
-        public bool TargetsNone() => TargetTarget == TargetTargetEnum.None;
+        // 10 * MouseOverTarget + TargetTarget
+        public UnitsTarget MouseOverTarget => (UnitsTarget)(reader.GetInt(59) / 10 % 10);
+        public UnitsTarget TargetTarget => (UnitsTarget)(reader.GetInt(59) % 10);
+        public bool TargetsMe() => TargetTarget == UnitsTarget.Me;
+        public bool TargetsPet() => TargetTarget == UnitsTarget.Pet;
+        public bool TargetsNone() => TargetTarget == UnitsTarget.None;
 
         public RecordInt AutoShot { get; } = new(60);
         public RecordInt MainHandSwing { get; } = new(61);
@@ -138,6 +155,14 @@ namespace Core
 
         public int RemainCastMs => reader.GetInt(76);
 
+
+        // MouseOverLevel * 100 + MouseOverClassification
+        public int MouseOverLevel => reader.GetInt(85) / 100;
+        public UnitClassification MouseOverClassification => (UnitClassification)(reader.GetInt(85) % 100);
+        public int MouseOverId => reader.GetInt(86);
+        public int MouseOverGuid => reader.GetInt(87);
+
+
         public int LastCastGCD { get; set; }
         public void ReadLastCastGCD()
         {
@@ -155,6 +180,15 @@ namespace Core
 
         public void Update(IAddonDataProvider reader)
         {
+            if (UIMapId.Updated(reader) && UIMapId.Value != 0)
+            {
+                if (worldMapAreaDB.TryGet(UIMapId.Value, out var wma))
+                {
+                    WorldMapArea = wma;
+                    MapId = wma.MapID;
+                }
+            }
+
             Bits.Update(reader);
             SpellInRange.Update(reader);
             Buffs.Update(reader);
@@ -181,6 +215,8 @@ namespace Core
 
         public void Reset()
         {
+            UIMapId.Reset();
+
             // Reset all RecordInt
             AutoShot.Reset();
             MainHandSwing.Reset();
