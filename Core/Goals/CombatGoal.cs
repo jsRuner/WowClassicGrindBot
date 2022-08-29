@@ -1,5 +1,7 @@
 ﻿using Core.GOAP;
+
 using Microsoft.Extensions.Logging;
+
 using System;
 using System.Numerics;
 
@@ -52,21 +54,12 @@ namespace Core.Goals
 
         public void OnGoapEvent(GoapEventArgs e)
         {
-            if (e is GoapStateEvent s)
+            if (e is GoapStateEvent s && s.Key == GoapKey.producedcorpse)
             {
-                if (s.Key == GoapKey.newtarget)
-                {
-                    logger.LogInformation("Reset cooldowns");
-
-                    ResetCooldowns();
-                }
-                else if (s.Key == GoapKey.producedcorpse)
-                {
-                    // have to check range
-                    // ex. target died far away have to consider the range and approximate
-                    float distance = (lastMaxDistance + lastMinDistance) / 2f;
-                    SendGoapEvent(new CorpseEvent(GetCorpseLocation(distance), distance));
-                }
+                // have to check range
+                // ex. target died far away have to consider the range and approximate
+                float distance = (lastMaxDistance + lastMinDistance) / 2f;
+                SendGoapEvent(new CorpseEvent(GetCorpseLocation(distance), distance));
             }
         }
 
@@ -81,6 +74,12 @@ namespace Core.Goals
                     keyAction.ResetCharges();
                 }
             }
+        }
+
+        private bool ValidTarget()
+        {
+            return playerReader.Bits.HasTarget() &&
+                playerReader.Bits.TargetIsNotDead();
         }
 
         public override void OnEnter()
@@ -143,7 +142,7 @@ namespace Core.Goals
                         continue;
                     }
 
-                    if (castingHandler.CastIfReady(keyAction))
+                    if (ValidTarget() && castingHandler.CastIfReady(keyAction, ValidTarget))
                     {
                         break;
                     }

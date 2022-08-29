@@ -10,9 +10,10 @@ using System.Collections.Generic;
 
 namespace Core.Goals
 {
-    public class NpcNameTargeting
+    public class NpcNameTargeting : IDisposable
     {
         private const int FAST_DELAY = 5;
+        private const int INTERACT_DELAY = 25;
 
         private readonly ILogger logger;
         private readonly CancellationToken ct;
@@ -21,6 +22,8 @@ namespace Core.Goals
         private readonly IMouseInput input;
         private readonly IMouseOverReader mouseOverReader;
         private readonly Wait wait;
+
+        private readonly CursorClassifier classifier;
 
         private IBlacklist mouseOverBlacklist;
 
@@ -47,6 +50,8 @@ namespace Core.Goals
             this.mouseOverBlacklist = blacklist;
             this.wait = wait;
 
+            classifier = new();
+
             whitePen = new Pen(Color.White, 3);
 
             blacklistIndexes = new();
@@ -54,8 +59,8 @@ namespace Core.Goals
             locTargeting = new Point[]
             {
                 new Point(0, 0),
-                new Point(-5, 15).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-                new Point(5, 15).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
+                new Point(-10, 5).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
+                new Point(10, 5).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
             };
 
             locFindBy = new Point[]
@@ -79,6 +84,11 @@ namespace Core.Goals
                 new Point(-15, 200).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
                 new Point(-15, 200).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
             };
+        }
+
+        public void Dispose()
+        {
+            classifier.Dispose();
         }
 
         public void UpdateBlacklist(IBlacklist blacklist)
@@ -121,7 +131,7 @@ namespace Core.Goals
             }
 
             int index = blacklistIndexes.Count;
-            if (index >= npcCount)
+            if (index > npcCount)
                 return false;
             NpcPosition npc = npcNameFinder.Npcs.ElementAt(index);
 
@@ -131,13 +141,13 @@ namespace Core.Goals
                     return false;
 
                 Point p = locTargeting[i];
+                p.Offset(npc.ClickPoint);
+                p.Offset(npcNameFinder.ToScreenCoordinates());
 
-                var clickPostion = npcNameFinder.ToScreenCoordinates(npc.ClickPoint.X + p.X, npc.ClickPoint.Y + p.Y);
-                input.SetCursorPosition(clickPostion);
-                ct.WaitHandle.WaitOne(FAST_DELAY);
+                input.SetCursorPosition(p);
+                classifier.Classify(out CursorType cls);
 
-                CursorClassifier.Classify(out CursorType cls);
-                if (cls is CursorType.Kill or CursorType.Vendor)
+                if (cls is CursorType.Kill)
                 {
                     wait.Update();
                     bool blacklisted = false;
@@ -153,9 +163,10 @@ namespace Core.Goals
                     }
 
                     logger.LogInformation($"> mouseover NPC found: {mouseOverReader.MouseOverId} - {npc.Rect}");
-                    input.InteractMouseOver();
+                    input.InteractMouseOver(ct);
                     return true;
                 }
+                ct.WaitHandle.WaitOne(FAST_DELAY);
             }
             return false;
         }
@@ -177,15 +188,16 @@ namespace Core.Goals
 
                 foreach (Point p in attemptPoints)
                 {
-                    Point clickPostion = npcNameFinder.ToScreenCoordinates(npc.ClickPoint.X + p.X, npc.ClickPoint.Y + p.Y);
-                    input.SetCursorPosition(clickPostion);
-                    ct.WaitHandle.WaitOne(FAST_DELAY);
+                    p.Offset(npc.ClickPoint);
+                    p.Offset(npcNameFinder.ToScreenCoordinates());
+                    input.SetCursorPosition(p);
 
-                    CursorClassifier.Classify(out CursorType cls);
+                    ct.WaitHandle.WaitOne(INTERACT_DELAY);
+
+                    classifier.Classify(out CursorType cls);
                     if (cursor.Contains(cls))
                     {
-                        ct.WaitHandle.WaitOne(FAST_DELAY);
-                        input.InteractMouseOver();
+                        input.InteractMouseOver(ct);
                         logger.LogInformation($"> NPCs found: {npc.Rect}");
                         return true;
                     }
@@ -200,7 +212,8 @@ namespace Core.Goals
             {
                 foreach (Point p in locFindBy)
                 {
-                    gr.DrawEllipse(whitePen, p.X + npc.ClickPoint.X, p.Y + npc.ClickPoint.Y, 5, 5);
+                    p.Offset(npc.ClickPoint);
+                    gr.DrawEllipse(whitePen, p.X, p.Y, 5, 5);
                 }
             }
         }
