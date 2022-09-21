@@ -36,7 +36,6 @@ namespace Core.Goals
 
             if (classConfig.Loot)
             {
-                state.LootableCorpseCount++;
                 AddEffect(GoapKey.shouldloot, true);
 
                 if (classConfig.GatherCorpse)
@@ -53,7 +52,7 @@ namespace Core.Goals
 
             if (classConfig.Loot)
             {
-                SendGoapEvent(new GoapStateEvent(GoapKey.shouldloot, true));
+                state.LootableCorpseCount++;
             }
         }
 
