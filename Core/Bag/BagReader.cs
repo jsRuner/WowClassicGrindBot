@@ -1,10 +1,11 @@
-﻿using Core.Database;
+using Core.Database;
 
 using SharedLib;
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 
 namespace Core
 {
@@ -18,8 +19,6 @@ namespace Core
 
         public ItemDB ItemDB { get; private set; }
 
-        private DateTime lastEvent;
-
         public List<BagItem> BagItems { get; } = new();
 
         public Bag[] Bags { get; } = new Bag[5];
@@ -27,8 +26,7 @@ namespace Core
         public event Action? DataChanged;
 
         public int Hash { private set; get; }
-
-        private bool changedFromEvent;
+        public int HashNewOrStackGain { private set; get; }
 
         public BagReader(ItemDB itemDb, EquipmentReader equipmentReader, int cbagMeta, int citemNumCount, int cItemId)
         {
@@ -63,16 +61,11 @@ namespace Core
 
             ReadInventory(reader, out bool inventoryChanged);
 
-            if (changedFromEvent || metaChanged || inventoryChanged || (DateTime.UtcNow - this.lastEvent).TotalSeconds > 11)
+            if (metaChanged || inventoryChanged)
             {
-                changedFromEvent = false;
                 DataChanged?.Invoke();
-                lastEvent = DateTime.UtcNow;
 
-                if (metaChanged || inventoryChanged)
-                {
-                    Hash++;
-                }
+                Hash++;
             }
         }
 
@@ -149,6 +142,9 @@ namespace Core
 
                         if (existingItem.Count != itemCount)
                         {
+                            if (existingItem.Count < itemCount)
+                                HashNewOrStackGain++;
+
                             existingItem.UpdateCount(itemCount);
                             hasChanged = true;
                         }
@@ -167,6 +163,8 @@ namespace Core
                     {
                         BagItems.Add(new BagItem(bag, slot, itemId, itemCount, new Item() { Entry = itemId, Name = "Unknown" }));
                     }
+
+                    HashNewOrStackGain++;
                 }
             }
             else
@@ -179,28 +177,31 @@ namespace Core
             }
         }
 
-        public List<string> ToBagString()
-        {
-            return Enumerable.Range(0, 5).Select(i =>
-                $"Bag {i}: " + string.Join(", ",
-                 BagItems.Where(b => b.Bag == i)
-                     .OrderBy(b => b.BagIndex)
-                     .Select(b => $"{b.ItemId}({b.Count})")
-                 ))
-                .ToList();
-        }
-
         public int BagItemCount() => BagItems.Count;
 
-        public int SlotCount => Bags.Sum((x) => x.SlotCount);
+        public int SlotCount => Bags.Sum(BagSlotCount);
 
-        public bool BagsFull() => Bags.Sum((x) => x.BagType == BagType.Unspecified ? x.FreeSlot : 0) == 0;
+        public bool BagsFull() => Bags.Sum(BagFreeSlotCount) == 0;
 
-        public bool AnyGreyItem() => BagItems.Any((x) => x.Item.Quality == 0);
+        public bool AnyGreyItem() => BagItems.Any(BagItemCommonQuality);
 
-        public int ItemCount(int itemId) => BagItems.Where(bi => bi.ItemId == itemId).Sum(bi => bi.Count);
+        public int ItemCount(int itemId)
+        {
+            int count = 0;
 
-        public bool HasItem(int itemId) => ItemCount(itemId) != 0;
+            var span = CollectionsMarshal.AsSpan(BagItems);
+            for (int i = 0; i < span.Length; i++)
+            {
+                if (span[i].ItemId == itemId)
+                {
+                    count += span[i].Count;
+                }
+            }
+
+            return count;
+        }
+
+        public bool HasItem(int itemId) => BagItems.Any(x => x.ItemId == itemId);
 
         public int HighestQuantityOfDrinkItemId()
         {
@@ -225,23 +226,39 @@ namespace Core
             return ItemCount(HighestQuantityOfFoodItemId());
         }
 
-
         private void OnEquipmentChanged(object? s, (int, int) tuple)
         {
-            if (tuple.Item1 is >= ((int)InventorySlotId.Bag_0) and <= ((int)InventorySlotId.Bag_3))
+            if (tuple.Item1 is
+                not >= ((int)InventorySlotId.Bag_0) or
+                not <= ((int)InventorySlotId.Bag_3))
             {
-                int index = tuple.Item1 - (int)InventorySlotId.Tabard;
-                Bags[index].ItemId = tuple.Item2;
-
-                UpdateBagName(index);
-
-                changedFromEvent = true;
+                return;
             }
+            int index = tuple.Item1 - (int)InventorySlotId.Tabard;
+            Bags[index].ItemId = tuple.Item2;
+
+            UpdateBagName(index);
         }
 
         private void UpdateBagName(int index)
         {
-            Bags[index].Name = ItemDB.Items.TryGetValue(Bags[index].ItemId, out Item item) ? item.Name : string.Empty;
+            Bags[index].Name =
+                ItemDB.Items.TryGetValue(Bags[index].ItemId, out Item item)
+                ? item.Name
+                : string.Empty;
         }
+
+
+        #region Helpers
+
+        private static int BagSlotCount(Bag b) => b.SlotCount;
+
+        private static int BagFreeSlotCount(Bag b) => b.BagType == BagType.Unspecified ? b.FreeSlot : 0;
+
+        private static bool BagItemCommonQuality(BagItem bi) => bi.Item.Quality == 0;
+
+        public int MaxBagSlot() => Bags.Max(BagSlotCount);
+
+        #endregion
     }
 }

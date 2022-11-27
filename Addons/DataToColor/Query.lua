@@ -62,6 +62,7 @@ local GetShapeshiftForm = GetShapeshiftForm
 local GetShapeshiftFormInfo = GetShapeshiftFormInfo
 local GetInventoryItemBroken = GetInventoryItemBroken
 local GetInventoryItemDurability = GetInventoryItemDurability
+local GetInventoryItemID = GetInventoryItemID
 local UnitOnTaxi = UnitOnTaxi
 local IsSwimming = IsSwimming
 local IsFalling = IsFalling
@@ -330,6 +331,8 @@ function DataToColor:populateActionbarCost(slot)
         id = GetMacroSpell(id)
     end
 
+    local found = false
+
     if id and actionType == DataToColor.C.ActionType.Spell or actionType == DataToColor.C.ActionType.Macro then
         local costTable = GetSpellPowerCost(id)
         if costTable ~= nil then
@@ -339,25 +342,19 @@ function DataToColor:populateActionbarCost(slot)
                     local meta = 100000 * slot + 10000 * order + costInfo.type + offsetEnumPowerType
                     --print(slot, actionType, order, costInfo.type, costInfo.cost, GetSpellLink(id), meta)
                     DataToColor.actionBarCostQueue:set(meta, costInfo.cost)
+                    found = true
                 end
             end
         end
     end
     -- default value mana with zero cost
-    DataToColor.actionBarCostQueue:set(100000 * slot + 10000 + offsetEnumPowerType, 0)
+    if found == false then
+        DataToColor.actionBarCostQueue:set(100000 * slot + 10000 + offsetEnumPowerType, 0)
+    end
 end
 
 function DataToColor:equipSlotItemId(slot)
-    if slot == nil then
-        return 0
-    end
-    local equip
-    if GetInventoryItemLink(DataToColor.C.unitPlayer, slot) == nil then
-        equip = 0
-    else _, _, equip = find(GetInventoryItemLink(DataToColor.C.unitPlayer, slot), DataToColor.C.ItemPattern)
-        equip = gsub(equip, 'm:', '')
-    end
-    return tonumber(equip or 0)
+    return GetInventoryItemID(DataToColor.C.unitPlayer, slot) or 0
 end
 
 -- -- Function to tell if a spell is on cooldown and if the specified slot has a spell assigned to it

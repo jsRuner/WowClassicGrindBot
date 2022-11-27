@@ -138,7 +138,7 @@ Required game client settings. Press `ESC` -> `System`
 
 ## 3.3 Optional - Replace default game Font
 
-Highly suggested to replace the default game font with a much **Bolder** one with [this guide](https://classic.wowhead.com/guides/changing-wow-text-font)
+Highly recommended to replace the default in-game font with a much **Bolder** one with [this guide](https://classic.wowhead.com/guides/changing-wow-text-font)
 
 Should be only concerned about `Friz Quadrata: the "Everything Else" Font` which is the `FRIZQT__.ttf` named file.
 
@@ -147,8 +147,8 @@ Example - [Robot-Medium](https://fonts.google.com/specimen/Roboto?thickness=5) -
 ## 4.1 Build Requirements
 
 * Windows 7 and above
-* [.NET 6.0 SDK](https://dotnet.microsoft.com/download/dotnet/6.0)
-* AnyCPU, x86 and x64 build supported. For lower memory usage x86 suggested.
+* [.NET 7.0 SDK](https://dotnet.microsoft.com/download/dotnet/7.0)
+* `AnyCPU`, `x86` and `x64` build supported.
 
 ## 4.2 Build the solution
 
@@ -367,6 +367,7 @@ Take a look at the class files in `/Json/class` for examples of what you can do.
 | `"PathFilename"` | [Path](#Path) to use while alive | **false** | `""` |
 | `"PathThereAndBack"` | While using the path, [should go start to and reverse](#There-and-back) | true | `true` |
 | `"PathReduceSteps"` | Reduce the number of path points | true | `false` |
+| `"SpellQueue"` | Should anticipate the next possible cast action within the [SpellQueue Window](http://thedefiantguild.com/forums/discussion/15431.html) | true | `false` |
 | `"Mode"` | What kind of [behaviour](#Modes) should the bot operate | true | `Mode.Grind` |
 | `"NPCMaxLevels_Above"` | Maximum allowed level above difference to the player | true | `1` |
 | `"NPCMaxLevels_Below"` | Maximum allowed level below difference to the player | true | `7` |
@@ -485,11 +486,11 @@ Can specify conditions with [Requirement(s)](#Requirement) in order to create a 
 | `"AfterCastWaitCastbar"` | wait for the castbar to finish, `SpellQueueTimeMs` excluded.<br>Blocks **CastingHandler**. | `false` |
 | `"AfterCastWaitBuff"` | wait for Aura=__(player-target debuff/buff)__ count changes.<br>Only works properly, when the Aura **count** changes.<br>Not suitable for refreshing already existing Aura<br>Blocks **CastingHandler**. | `false` |
 | `"AfterCastAuraExpected"` | refreshing Aura=__(player-target debuff/buff)__<br>Just adds an extra(`SpellQueueTimeMs`) Cooldown to the action, so it wont repeat itself.<br>Not blocking  **CastingHandler**. | `false` |
-| `"AfterCastWaitBag"` | wait for inventory, bag change.<br>Blocks **CastingHandler**. | `false` |
+| `"AfterCastWaitBag"` | wait for any inventory, bag change.<br>Blocks **CastingHandler**. | `false` |
 | `"AfterCastWaitCombat"` | wait for player entering combat.<br>Blocks **CastingHandler**. | `false` |
 | `"AfterCastWaitMeleeRange"` | wait for interrupted either:<br>* target enters melee range<br>* target starts casting<br>* player receives damage<br>Blocks **CastingHandler**. | `false` |
 | `"AfterCastStepBack"` | start backpedaling for milliseconds.<br>If value set to `-1` attempts to use the whole remaining GCD duration.<br>Blocks **CastingHandler**. | `0` |
-| `"AfterCastWaitGCD"` | the Global cooldown fully expire.<br>Blocks **CastingHandler**. | `0` |
+| `"AfterCastWaitGCD"` | the Global cooldown fully expire.<br>Blocks **CastingHandler**. | `false` |
 | `"AfterCastDelay"` | delay in milliseconds.<br>Blocks **CastingHandler**. | `0` |
 | --- | --- | --- |
 
@@ -873,8 +874,6 @@ Formula: `[Keyword] [Operator] [Numeric integer value]`
 | `Debuff_{IntVariable_Name}` | Returns the given `{IntVariable_Name}` remaining target debuff up time |
 | `CurGCD` | Returns the player current remaining GCD time |
 | `GCD` | Alias for `1500` value |
-| `SpellQueueTime` | Alias for `400` value |
-| `NextSpell` | Alias for `1900` value |
 
 For the `MinRange` and `MaxRange` gives an approximation range distance between the player and target.
 

@@ -56,8 +56,8 @@ local UnitHealth = UnitHealth
 local UnitPowerMax = UnitPowerMax
 local UnitPower = UnitPower
 
-local GetContainerNumFreeSlots = GetContainerNumFreeSlots
-local GetContainerItemInfo = GetContainerItemInfo
+local GetContainerNumFreeSlots = DataToColor.GetContainerNumFreeSlots
+local GetContainerItemInfo = DataToColor.GetContainerItemInfo
 local GetRuneCooldown = GetRuneCooldown
 local GetRuneType = GetRuneType
 
@@ -73,16 +73,16 @@ local PowerType = Enum.PowerType
 
 local GetMoney = GetMoney
 
-local GetContainerNumSlots = GetContainerNumSlots
+local GetContainerNumSlots = DataToColor.GetContainerNumSlots
 local GetComboPoints = GetComboPoints
 
-local GetContainerItemLink = GetContainerItemLink
-local PickupContainerItem = PickupContainerItem
+local GetContainerItemLink = DataToColor.GetContainerItemLink
+local PickupContainerItem = DataToColor.PickupContainerItem
 local DeleteCursorItem = DeleteCursorItem
 local GetMerchantItemLink = GetMerchantItemLink
 local GetItemInfo = GetItemInfo
 local GetCoinTextureString = GetCoinTextureString
-local UseContainerItem = UseContainerItem
+local UseContainerItem = DataToColor.UseContainerItem
 
 -- initialization
 local globalCounter = 0
@@ -309,7 +309,7 @@ function DataToColor:InitUpdateQueues()
 end
 
 function DataToColor:InitEquipmentQueue()
-    for eqNum = 1, 23 do
+    for eqNum = 0, 23 do
         DataToColor.equipmentQueue:push(eqNum)
     end
 end
@@ -534,8 +534,8 @@ function DataToColor:CreateFrames(n)
                 end
 
                 -- 23 24
-                local equipmentSlot = DataToColor.equipmentQueue:shift()
-                Pixel(int, equipmentSlot or 0, 23)
+                local equipmentSlot = DataToColor.equipmentQueue:shift() or 0
+                Pixel(int, equipmentSlot, 23)
                 Pixel(int, DataToColor:equipSlotItemId(equipmentSlot), 24)
                 --DataToColor:Print("equipmentQueue ", equipmentSlot, " -> ", itemId)
             end

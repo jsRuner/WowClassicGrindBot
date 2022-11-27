@@ -28,7 +28,7 @@ namespace Core.Goals
         private readonly GoapAgentState state;
 
         private bool canRun;
-        private int bagHash;
+        private int bagHashNewOrStackGain;
 
         private readonly List<SkinCorpseEvent> corpses = new();
 
@@ -91,7 +91,7 @@ namespace Core.Goals
                 return;
             }
 
-            bagHash = bagReader.Hash;
+            bagHashNewOrStackGain = bagReader.HashNewOrStackGain;
 
             wait.Fixed(playerReader.NetworkLatency.Value);
 
@@ -187,7 +187,7 @@ namespace Core.Goals
                 int remainMs = playerReader.RemainCastMs;
                 playerReader.LastUIError = 0;
 
-                int waitTime = remainMs + CastingHandler.SpellQueueHalfMs + playerReader.NetworkLatency.Value;
+                int waitTime = remainMs + playerReader.SpellQueueTimeMs + playerReader.NetworkLatency.Value;
                 Log($"Waiting for {(herbalism ? "Herb Gathering" : "Skinning")} castbar to end! {waitTime}ms");
 
                 (t, e) = wait.Until(waitTime, herbalism ? HerbalismCastEnded : SkinningCastEnded);
@@ -315,7 +315,7 @@ namespace Core.Goals
 
         private bool LootWindowClosedOrBagChanged()
         {
-            return bagHash != bagReader.Hash ||
+            return bagHashNewOrStackGain != bagReader.HashNewOrStackGain ||
                 (LootStatus)playerReader.LootEvent.Value is
                 LootStatus.CLOSED;
         }

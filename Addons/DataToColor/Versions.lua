@@ -40,6 +40,7 @@ if DataToColor.IsClassic() then
   LibClassicCasterino = _G.LibStub("LibClassicCasterino")
 end
 
+local Som140 = DataToColor.IsClassic() and select(4, GetBuildInfo()) == 11400
 local TBC253 = DataToColor.IsClassic_BCC() and select(4, GetBuildInfo()) >= 20503
 local Wrath340 = DataToColor.IsClassic_BCC() and select(4, GetBuildInfo()) >= 30400
 
@@ -59,9 +60,14 @@ end
 
 if DataToColor.IsRetail() or TBC253 or DataToColor.IsClassic_Wrath() then
   DataToColor.UnitCastingInfo = UnitCastingInfo
-elseif DataToColor.IsClassic_BCC() then
+elseif Som140 then
   DataToColor.UnitCastingInfo = function(unit)
     local name, text, texture, startTimeMS, endTimeMS, isTradeSkill, castID, spellId = UnitCastingInfo(unit)
+    return name, text, texture, startTimeMS, endTimeMS, isTradeSkill, castID, nil, spellId
+  end
+elseif DataToColor.IsClassic_BCC() or DataToColor.IsClassic() then
+  DataToColor.UnitCastingInfo = function(unit)
+    local name, text, texture, startTimeMS, endTimeMS, isTradeSkill, castID, interrupt, spellId = UnitCastingInfo(unit)
     return name, text, texture, startTimeMS, endTimeMS, isTradeSkill, castID, nil, spellId
   end
 else
@@ -76,9 +82,14 @@ end
 
 if DataToColor.IsRetail() or TBC253 or DataToColor.IsClassic_Wrath() then
   DataToColor.UnitChannelInfo = UnitChannelInfo
-elseif DataToColor.IsClassic_BCC() then
+elseif Som140 then
   DataToColor.UnitChannelInfo = function(unit)
     local name, text, texture, startTimeMS, endTimeMS, isTradeSkill, spellId = UnitChannelInfo(unit)
+    return name, text, texture, startTimeMS, endTimeMS, isTradeSkill, nil, spellId
+  end
+elseif DataToColor.IsClassic_BCC() or DataToColor.IsClassic() then
+  DataToColor.UnitChannelInfo = function(unit)
+    local name, text, texture, startTimeMS, endTimeMS, isTradeSkill, interrupt, spellId = UnitChannelInfo(unit)
     return name, text, texture, startTimeMS, endTimeMS, isTradeSkill, nil, spellId
   end
 else
@@ -89,4 +100,36 @@ else
       return LibClassicCasterino:UnitChannelInfo(unit)
     end
   end
+end
+
+-- bag changes from 10.0
+
+DataToColor.GetContainerNumSlots = GetContainerNumSlots
+if DataToColor.GetContainerNumSlots == nil then
+  DataToColor.GetContainerNumSlots = C_Container.GetContainerNumSlots
+end
+
+DataToColor.GetContainerItemInfo = GetContainerItemInfo
+if DataToColor.GetContainerItemInfo == nil then
+  DataToColor.GetContainerItemInfo = C_Container.GetContainerItemInfo
+end
+
+DataToColor.GetContainerNumFreeSlots = GetContainerNumFreeSlots
+if DataToColor.GetContainerNumFreeSlots == nil then
+  DataToColor.GetContainerNumFreeSlots = C_Container.GetContainerNumFreeSlots
+end
+
+DataToColor.GetContainerItemLink = GetContainerItemLink
+if DataToColor.GetContainerItemLink == nil then
+  DataToColor.GetContainerItemLink = C_Container.GetContainerItemLink
+end
+
+DataToColor.PickupContainerItem = PickupContainerItem
+if DataToColor.PickupContainerItem == nil then
+  DataToColor.PickupContainerItem = C_Container.PickupContainerItem
+end
+
+DataToColor.UseContainerItem = UseContainerItem
+if DataToColor.UseContainerItem == nil then
+  DataToColor.UseContainerItem = C_Container.UseContainerItem
 end

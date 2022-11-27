@@ -28,7 +28,7 @@ namespace Core
 
         private readonly Dictionary<int, SchoolMask[]> immunityBlacklist;
 
-        private readonly List<string> negateKeywords = new()
+        private readonly string[] negateKeywords = new string[2]
         {
             "not ",
             "!"
@@ -321,9 +321,7 @@ namespace Core
                 { "MainHandSpeed", playerReader.MainHandSpeedMs },
                 { "MainHandSwing", () => Math.Clamp(playerReader.MainHandSwing.ElapsedMs() - playerReader.MainHandSpeedMs(), -playerReader.MainHandSpeedMs(), 0) },
                 { "CurGCD", playerReader.GCD._Value },
-                { "GCD", CastingHandler._GCD },
-                { "SpellQueueTime", CastingHandler._SpellQueueTime },
-                { "NextSpell", CastingHandler._NextSpell },
+                { "GCD", CastingHandler._GCD }
             };
         }
 
@@ -474,11 +472,10 @@ namespace Core
         private void InitPerKeyActionRequirementByKey(KeyAction item, string prefixKey)
         {
             string key = $"{prefixKey}_{item.Name}";
-            if (intVariables.ContainsKey(prefixKey))
-                intVariables.Remove(prefixKey);
+            intVariables.Remove(prefixKey);
 
-            if (intVariables.ContainsKey(key))
-                intVariables.Add(prefixKey, intVariables[key]);
+            if (intVariables.TryGetValue(key, out Func<int>? func))
+                intVariables.Add(prefixKey, func);
         }
 
         private void AddTargetIsCastingRequirement(List<Requirement> list, KeyAction item, PlayerReader playerReader)
@@ -742,7 +739,7 @@ namespace Core
 
         private bool UsableGCD(string key)
         {
-            return intVariables[key]() <= CastingHandler.SpellQueueTimeMs - playerReader.NetworkLatency.Value;
+            return intVariables[key]() <= CastingHandler.SPELL_QUEUE - playerReader.NetworkLatency.Value;
         }
 
         private Requirement CreateTargetCastingSpell(string requirement)
