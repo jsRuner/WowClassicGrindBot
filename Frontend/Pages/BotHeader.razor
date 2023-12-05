@@ -1,7 +1,19 @@
 ﻿@using Core.GOAP
 
 @inject IAddonReader addonReader
+@inject PlayerReader playerReader
+@inject CombatLog combatLog
+
+@inject BagReader BagReader
+@inject SpellBookReader SpellBookReader
+@inject TalentReader TalentReader
+@inject ActionBarCostReader ActionBarCostReader
+
+@inject AddonBits Bits
+
 @inject IBotController botController
+@inject LevelTracker levelTracker
+@inject WApi api
 
 @implements IDisposable
 
@@ -14,7 +26,7 @@
     <div class="card-body p-0">
         <table class="table">
             <tr>
-                <th>Level @playerReader.Level.Value<br>(XP: @((int)playerReader.PlayerXpPercentage)%)</th>
+                <th>Level @playerReader.Level.Value<br>(XP: @((int)playerReader.PlayerXpPercent)%)</th>
                 <th>Health / Resource:</th>
                 <th>Bag Items:</th>
                 <th>Actionbar / Spell / Talent:</th>
@@ -27,24 +39,24 @@
                 </td>
                 <td>@playerReader.HealthCurrent() (@playerReader.HealthPercent() %)<br />@playerReader.PTCurrent() (@playerReader.PTPercentage() %)</td>
 
-                <td>@addonReader.BagReader.BagItems.Count / @addonReader.BagReader.SlotCount</td>
-                <td>@addonReader.ActionBarCostReader.Count / @addonReader.SpellBookReader.Count / @addonReader.TalentReader.Count</td>
+                <td>@BagReader.BagItems.Count / @BagReader.SlotCount</td>
+                <td>@ActionBarCostReader.Count / @SpellBookReader.Count / @TalentReader.Count</td>
                 <td>
-                    @if (addonReader.PlayerReader.Bits.HasTarget())
+                    @if (Bits.Target())
                     {
-                        <a href="@($"{WApi.NpcId}{playerReader.TargetId}")" target="_blank">
+                        <a href="@($"{api.NpcId}{playerReader.TargetId}")" target="_blank">
                             <div>
                                 @addonReader.TargetName<br />
-                                (@playerReader.TargetLevel) @((int)playerReader.TargetHealthPercentage()) %<br />
+                                (@playerReader.TargetLevel) @((int)playerReader.TargetHealthPercent()) %<br />
                                 GUID: @playerReader.TargetGuid
 
                                 @if (playerReader.ComboPoints() > 0)
                                 {
                                     <div>Combo Points: @playerReader.ComboPoints()</div>
                                 }
-                                @if (addonReader.DamageTakenCount() > 1)
+                                @if (combatLog.DamageTakenCount() > 1)
                                 {
-                                    <div>Fighting @addonReader.DamageTakenCount() Mobs</div>
+                                    <div>Fighting @combatLog.DamageTakenCount() Mobs</div>
                                 }
 
                             </div>
@@ -52,7 +64,7 @@
                     }
                     else
                     {
-                        <div>Kills: @levelTracker.MobsKilled</div>
+                        <div>Kills: @botController.GoapAgent?.SessionStat.Kills</div>
                     }
                 </td>
             </tr>
@@ -78,10 +90,7 @@
     [Parameter]
     public bool ShowActiveGoal { get; set; } = true;
 
-    private PlayerReader playerReader => addonReader.PlayerReader;
-    private LevelTracker levelTracker => addonReader.LevelTracker;
-
-    private bool PlayerInCombat => this.playerReader.Bits.PlayerInCombat();
+    private bool PlayerInCombat => Bits.Combat();
 
     private string CombatBadge()
     {
@@ -105,6 +114,8 @@
 
     private string DisplayTimeToLevel()
     {
-        return levelTracker.TimeToLevel == TimeSpan.Zero ? "∞" : levelTracker.TimeToLevel.ToString();
+        return levelTracker.TimeToLevel == TimeSpan.Zero
+            ? "∞"
+            : levelTracker.TimeToLevel.ToString();
     }
 }

@@ -1,6 +1,5 @@
 using System;
-using System.Drawing;
-using System.Linq;
+using SixLabors.ImageSharp;
 using System.Threading;
 using SharedLib.Extensions;
 using SharedLib.NpcFinder;
@@ -8,211 +7,190 @@ using Game;
 using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
 
-namespace Core.Goals
+namespace Core.Goals;
+
+public sealed partial class NpcNameTargeting : IDisposable
 {
-    public sealed class NpcNameTargeting : IDisposable
+    private const int INTERACT_DELAY = 5;
+
+    private readonly ILogger<NpcNameTargeting> logger;
+    private readonly CancellationToken token;
+    private readonly IWowScreen screen;
+    private readonly NpcNameFinder npcNameFinder;
+    private readonly NpcNameTargetingLocations locations;
+    private readonly IMouseInput input;
+    private readonly IMouseOverReader mouseOverReader;
+    private readonly Wait wait;
+
+    private readonly CursorClassifier classifier;
+
+    private readonly IBlacklist mouseOverBlacklist;
+
+    private readonly IGameMenuWindowShown gmws;
+
+    private int index;
+    private int npcCount = -1;
+
+    public int NpcCount => npcNameFinder.NpcCount;
+
+    private Point[] Targeting => locations.Targeting;
+    private Point[] locFindBy => locations.FindBy;
+
+    public NpcNameTargeting(ILogger<NpcNameTargeting> logger,
+        CancellationTokenSource cts, IWowScreen screen,
+        NpcNameFinder npcNameFinder,
+        NpcNameTargetingLocations locations,
+        IMouseInput input,
+        IMouseOverReader mouseOverReader, IBlacklist blacklist, Wait wait,
+        IGameMenuWindowShown gmws)
     {
-        private const int FAST_DELAY = 5;
-        private const int INTERACT_DELAY = 25;
+        this.logger = logger;
+        token = cts.Token;
+        this.screen = screen;
+        this.npcNameFinder = npcNameFinder;
+        this.locations = locations;
+        this.input = input;
+        this.mouseOverReader = mouseOverReader;
+        this.mouseOverBlacklist = blacklist;
+        this.wait = wait;
 
-        private readonly ILogger logger;
-        private readonly CancellationToken ct;
-        private readonly IWowScreen wowScreen;
-        private readonly NpcNameFinder npcNameFinder;
-        private readonly IMouseInput input;
-        private readonly IMouseOverReader mouseOverReader;
-        private readonly Wait wait;
+        this.gmws = gmws;
 
-        private readonly CursorClassifier classifier;
+        classifier = new();
+    }
 
-        private IBlacklist mouseOverBlacklist;
+    public void Dispose()
+    {
+        classifier.Dispose();
+    }
 
-        private readonly Pen whitePen;
+    public void ChangeNpcType(NpcNames npcNames)
+    {
+        npcNameFinder.ChangeNpcType(npcNames);
+        screen.Enabled = npcNames != NpcNames.None;
+    }
 
-        private int index;
-        private int npcCount = -1;
+    public void Reset()
+    {
+        npcCount = -1;
+        index = 0;
+    }
 
-        public int NpcCount => npcNameFinder.NpcCount;
+    public void WaitForUpdate()
+    {
+        npcNameFinder.WaitForUpdate();
+    }
 
-        public Point[] locTargeting { get; }
-        public Point[] locFindBy { get; }
+    public bool FoundAny()
+    {
+        return npcNameFinder.NpcCount > 0;
+    }
 
-        public NpcNameTargeting(ILogger logger, CancellationTokenSource cts,
-            IWowScreen wowScreen, NpcNameFinder npcNameFinder, IMouseInput input,
-            IMouseOverReader mouseOverReader, IBlacklist blacklist, Wait wait)
+    public bool AcquireNonBlacklisted(CancellationToken token)
+    {
+        if (npcCount != NpcCount)
         {
-            this.logger = logger;
-            ct = cts.Token;
-            this.wowScreen = wowScreen;
-            this.npcNameFinder = npcNameFinder;
-            this.input = input;
-            this.mouseOverReader = mouseOverReader;
-            this.mouseOverBlacklist = blacklist;
-            this.wait = wait;
-
-            classifier = new();
-
-            whitePen = new Pen(Color.White, 3);
-
-            locTargeting = new Point[]
-            {
-                new Point(0, 0),
-                new Point(-10, 5).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-                new Point(10, 5).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-            };
-
-            locFindBy = new Point[]
-            {
-                new Point(0, 0),
-                new Point(0, 15).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-
-                new Point(0, 50).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-                new Point(-15, 50).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-                new Point(15, 50).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-
-                new Point(0, 100).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-                new Point(-15, 100).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-                new Point(15, 100).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-
-                new Point(0, 150).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-                new Point(-15, 150).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-                new Point(15, 150).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-
-                new Point(0,   200).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-                new Point(-15, 200).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-                new Point(-15, 200).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight),
-            };
-        }
-
-        public void Dispose()
-        {
-            classifier.Dispose();
-        }
-
-        public void UpdateBlacklist(IBlacklist blacklist)
-        {
-            this.mouseOverBlacklist = blacklist;
-
-            logger.LogInformation($"{nameof(NpcNameTargeting)}: set blacklist to {blacklist.GetType().Name}");
-        }
-
-        public void ChangeNpcType(NpcNames npcNames)
-        {
-            bool changed = npcNameFinder.ChangeNpcType(npcNames);
-            wowScreen.Enabled = npcNames != NpcNames.None;
-            if (changed)
-                ct.WaitHandle.WaitOne(5); // BotController ScreenshotThread 4ms delay when idle
-        }
-
-        public void Reset()
-        {
-            npcCount = -1;
+            npcCount = NpcCount;
             index = 0;
         }
 
-        public void WaitForUpdate()
-        {
-            npcNameFinder.WaitForUpdate();
-        }
+        if (index > NpcCount - 1)
+            return false;
 
-        public bool FoundNpcName()
-        {
-            return npcNameFinder.NpcCount > 0;
-        }
+        ReadOnlySpan<NpcPosition> span = npcNameFinder.Npcs;
+        ref readonly NpcPosition npc = ref span[index];
 
-        public bool AquireNonBlacklisted(CancellationToken ct)
+        Point p = Targeting[Random.Shared.Next(Targeting.Length)];
+        p.Offset(npc.ClickPoint);
+        p.Offset(npcNameFinder.ToScreenCoordinates());
+
+        input.SetCursorPos(p);
+        classifier.Classify(out CursorType cls, out _);
+
+        if (cls is CursorType.Kill && mouseOverReader.MouseOverId != 0)
         {
-            if (npcCount != NpcCount)
+            if (mouseOverBlacklist.Is())
             {
-                npcCount = NpcCount;
-                index = 0;
+                LogBlacklistAdded(logger, index,
+                    mouseOverReader.MouseOverId, npc.Rect);
+                index++;
+                return false;
             }
 
-            if (index > NpcCount - 1)
-                return false;
-            NpcPosition npc = npcNameFinder.Npcs[index];
+            LogFoundTarget(logger, cls.ToStringF(), mouseOverReader.MouseOverId,
+                npc.Rect);
 
-            for (int i = 0; i < locTargeting.Length; i++)
+            input.InteractMouseOver(token);
+            return true;
+        }
+
+        return false;
+    }
+
+    public bool FindBy(ReadOnlySpan<CursorType> cursors, CancellationToken token)
+    {
+        int c = locFindBy.Length;
+        const int e = 3;
+        Span<Point> attempts = stackalloc Point[c + (c * e)];
+
+        float w = npcNameFinder.ScaleToRefWidth;
+        float h = npcNameFinder.ScaleToRefHeight;
+
+        ReadOnlySpan<NpcPosition> span = npcNameFinder.Npcs;
+        for (int i = 0;
+            i < span.Length &&
+            !token.IsCancellationRequested &&
+            !gmws.GameMenuWindowShown();
+            i++)
+        {
+            ref readonly NpcPosition npc = ref span[i];
+            for (int j = 0; j < c; j += e)
             {
-                if (ct.IsCancellationRequested)
-                    return false;
+                Point p = locFindBy[j];
+                attempts[j] = p;
+                attempts[j + c] = new Point(npc.Rect.Width / 2, p.Y).Scale(w, h);
+                attempts[j + c + 1] = new Point(-npc.Rect.Width / 2, p.Y).Scale(w, h);
+            }
 
-                Point p = locTargeting[i];
+            for (int k = 0;
+                k < attempts.Length &&
+                !token.IsCancellationRequested &&
+                !gmws.GameMenuWindowShown();
+                k++)
+            {
+                Point p = attempts[k];
                 p.Offset(npc.ClickPoint);
                 p.Offset(npcNameFinder.ToScreenCoordinates());
 
-                input.SetCursorPosition(p);
-                classifier.Classify(out CursorType cls);
+                input.SetCursorPos(p);
 
-                if (cls is CursorType.Kill)
+                classifier.Classify(out CursorType cls, out _);
+                if (cursors.BinarySearch(cls, Comparer<CursorType>.Default) != -1)
                 {
-                    wait.Update();
-                    bool blacklisted = false;
-                    if (mouseOverReader.MouseOverId == 0 || (blacklisted = mouseOverBlacklist.Is()))
-                    {
-                        if (blacklisted)
-                        {
-                            //logger.LogInformation($"> NPCs {index} added to blacklist {mouseOverReader.MouseOverId} - {npc.Rect}");
-                            index++;
-                        }
-
-                        return false;
-                    }
-
-                    logger.LogInformation($"> mouseover NPC found: {mouseOverReader.MouseOverId} - {npc.Rect}");
-                    input.InteractMouseOver(ct);
+                    input.InteractMouseOver(token);
+                    LogFoundTarget(logger, cls.ToStringF(), mouseOverReader.MouseOverId, npc.Rect);
                     return true;
                 }
-                ct.WaitHandle.WaitOne(FAST_DELAY);
-            }
-            return false;
-        }
 
-        public bool FindBy(params CursorType[] cursor)
-        {
-            int c = locFindBy.Length;
-            int e = 3;
-            foreach (NpcPosition npc in npcNameFinder.Npcs)
-            {
-                Point[] attemptPoints = new Point[c + (c * e)];
-                for (int i = 0; i < c; i += e)
-                {
-                    Point p = locFindBy[i];
-                    attemptPoints[i] = p;
-                    attemptPoints[i + c] = new Point(npc.Rect.Width / 2, p.Y).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight);
-                    attemptPoints[i + c + 1] = new Point(-npc.Rect.Width / 2, p.Y).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight);
-                }
-
-                foreach (Point p in attemptPoints)
-                {
-                    p.Offset(npc.ClickPoint);
-                    p.Offset(npcNameFinder.ToScreenCoordinates());
-                    input.SetCursorPosition(p);
-
-                    ct.WaitHandle.WaitOne(INTERACT_DELAY);
-
-                    classifier.Classify(out CursorType cls);
-                    if (cursor.Contains(cls))
-                    {
-                        input.InteractMouseOver(ct);
-                        logger.LogInformation($"> NPCs found: {npc.Rect}");
-                        return true;
-                    }
-                }
-            }
-            return false;
-        }
-
-        public void ShowClickPositions(Graphics gr)
-        {
-            foreach (NpcPosition npc in npcNameFinder.Npcs)
-            {
-                foreach (Point p in locFindBy)
-                {
-                    p.Offset(npc.ClickPoint);
-                    gr.DrawEllipse(whitePen, p.X, p.Y, 5, 5);
-                }
+                wait.Update();
             }
         }
+        return false;
     }
+
+    #region Logging
+
+    [LoggerMessage(
+        EventId = 0160,
+        Level = LogLevel.Warning,
+        Message = "NPC {index} added to blacklist {mouseOverId} | {rect}")]
+    static partial void LogBlacklistAdded(ILogger logger, int index, int mouseOverId, Rectangle rect);
+
+    [LoggerMessage(
+        EventId = 0161,
+        Level = LogLevel.Information,
+        Message = "NPC found: {cursorType} | {mouseOverId} | {rect}")]
+    static partial void LogFoundTarget(ILogger logger, string cursorType, int mouseOverId, Rectangle rect);
+
+    #endregion
 }

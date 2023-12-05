@@ -1,30 +1,30 @@
-﻿using System.Drawing;
+﻿using SixLabors.ImageSharp;
+using System;
 using System.Threading;
 
 using Game;
 
-namespace CoreTests
+namespace CoreTests;
+
+internal sealed class MockWoWProcess : IMouseInput
 {
-    public class MockWoWProcess : IMouseInput
+    public void RightClick(Point p)
     {
-        public void RightClickMouse(Point p)
-        {
-            throw new System.NotImplementedException();
-        }
+        throw new NotImplementedException();
+    }
 
-        public void LeftClickMouse(Point p)
-        {
-            throw new System.NotImplementedException();
-        }
+    public void LeftClick(Point p)
+    {
+        throw new NotImplementedException();
+    }
 
-        public void SetCursorPosition(Point p)
-        {
-            throw new System.NotImplementedException();
-        }
+    public void SetCursorPos(Point p)
+    {
+        throw new NotImplementedException();
+    }
 
-        public void InteractMouseOver(CancellationToken ct)
-        {
-            throw new System.NotImplementedException();
-        }
+    public void InteractMouseOver(CancellationToken token)
+    {
+        throw new NotImplementedException();
     }
 }

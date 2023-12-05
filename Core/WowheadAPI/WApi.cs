@@ -1,59 +1,87 @@
-﻿using System.Threading.Tasks;
+﻿using System.Collections.Concurrent;
+using System.Threading.Tasks;
 using System.Xml;
 
-namespace Core
+using SharedLib;
+
+namespace Core;
+
+public sealed class WApi
 {
-    public static class WApi
+    private string BaseUrl { get; }
+
+    private string BaseUIMapUrl { get; }
+
+    public WApi(StartupClientVersion scv)
     {
-        public static ClientVersion Version
+        BaseUrl = scv.Version switch
         {
-            set
+            ClientVersion.SoM => "https://classic.wowhead.com",
+            ClientVersion.TBC => "https://tbc.wowhead.com",
+            ClientVersion.Wrath => "https://www.wowhead.com/wotlk",
+            _ => "https://www.wowhead.com",
+        };
+
+        BaseUIMapUrl = scv.Version switch
+        {
+            ClientVersion.SoM => "https://wow.zamimg.com/images/wow/classic/maps/enus/original/",
+            ClientVersion.TBC => "https://wow.zamimg.com/images/wow/tbc/maps/enus/original/",
+            ClientVersion.Wrath => "https://wow.zamimg.com/images/wow/wrath/maps/enus/original/",
+            _ => "https://wow.zamimg.com/images/wow/maps/enus/original/",
+        };
+
+    }
+
+    public string NpcId => $"{BaseUrl}/npc=";
+    public string ItemId => $"{BaseUrl}/item=";
+    public string SpellId => $"{BaseUrl}/spell=";
+
+    public const string TinyIconUrl = "https://wow.zamimg.com/images/wow/icons/tiny/{0}.gif";
+    public const string MedIconUrl = "https://wow.zamimg.com/images/wow/icons/medium/{0}.jpg";
+
+    private static readonly XmlReaderSettings iconSettings = new() { Async = true, LineNumberOffset = 14 };
+    private const string ICON = "icon";
+
+    private static readonly ConcurrentDictionary<int, Task<string>> requests = new();
+
+    public async Task<string> RequestItemIconName(int itemId)
+    {
+        if (requests.TryGetValue(itemId, out Task<string>? inProgress))
+        {
+            return await inProgress;
+        }
+
+        Task<string> task = FetchItemIconName(itemId);
+        if (requests.TryAdd(itemId, task))
+        {
+            await task;
+            requests.TryRemove(itemId, out _);
+            return task.Result;
+        }
+
+        return string.Empty;
+    }
+
+    private async Task<string> FetchItemIconName(int itemId)
+    {
+        try
+        {
+            using XmlReader xml = XmlReader.Create($"{ItemId}{itemId}&xml", iconSettings);
+            while (await xml.ReadAsync())
             {
-                switch (value)
+                if (xml.NodeType == XmlNodeType.Element && xml.Name.Contains(ICON))
                 {
-                    case ClientVersion.SoM:
-                        BaseUrl = "https://classic.wowhead.com";
-                        break;
-                    case ClientVersion.TBC:
-                        BaseUrl = "https://tbc.wowhead.com";
-                        break;
-                    case ClientVersion.Wrath:
-                        BaseUrl = "https://www.wowhead.com/wotlk";
-                        break;
-                    default:
-                    case ClientVersion.Retail:
-                        BaseUrl = "https://www.wowhead.com";
-                        break;
+                    return await xml.ReadElementContentAsStringAsync();
                 }
             }
         }
+        catch { }
 
-        public static string BaseUrl { get; set; } = "https://www.wowhead.com";
+        return string.Empty;
+    }
 
-        public static string NpcId => $"{BaseUrl}/npc=";
-        public static string ItemId => $"{BaseUrl}/item=";
-        public static string SpellId => $"{BaseUrl}/spell=";
-
-        public const string TinyIconUrl = "https://wow.zamimg.com/images/wow/icons/tiny/{0}.gif";
-        public const string MedIconUrl = "https://wow.zamimg.com/images/wow/icons/medium/{0}.jpg";
-
-        public static async Task<string> FetchItemIconName(int itemId)
-        {
-            try
-            {
-                using XmlReader reader = XmlReader.Create($"{ItemId}{itemId}&xml", new XmlReaderSettings { Async = true, LineNumberOffset = 14 });
-                while (await reader.ReadAsync())
-                {
-                    if (reader.NodeType == XmlNodeType.Element && reader.Name.Contains("icon"))
-                    {
-                        await reader.ReadAsync();
-                        return reader.Value;
-                    }
-                }
-            }
-            catch { }
-
-            return string.Empty;
-        }
+    public string GetMapImage(int areaId)
+    {
+        return $"{BaseUIMapUrl}{areaId}.jpg";
     }
 }

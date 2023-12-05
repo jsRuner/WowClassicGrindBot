@@ -1,0 +1,57 @@
+﻿@using Frontend
+
+@inject IHostEnvironment Env
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BlazorServer</title>
+    <base href="/" />
+
+    <link rel="stylesheet" href="_content/Frontend/css/bootstrap/bootstrap.icons.min.css" />
+    <!--<link rel="stylesheet" href="_content/Frontend/css/bootstrap/bootstrap-theme.min.css" />-->
+    <link rel="stylesheet" href="_content/Frontend/css/bootstrap/bootstrap.min.css" />
+    <link rel="stylesheet" href="_content/Frontend/css/bootstrap/bootstrap-dark.min.css" />
+
+    <script src="_content/BlazorTable/BlazorTable.min.js"></script>
+
+    <script src="_content/MatBlazor/dist/matBlazor.js"></script>
+    <link href="_content/MatBlazor/dist/matBlazor.css" rel="stylesheet" />
+
+    <link href="_content/Frontend/css/site.css" rel="stylesheet" />
+    <script src="_content/Frontend/script/d3.v7.min.js"></script>
+
+    <link rel="stylesheet" href="_content/Frontend/css/animate-v4.0.0.min.css" />
+
+    <script>const whTooltips = { colorLinks: true, iconizeLinks: true, renameLinks: true };</script>
+    <script src="_content/Frontend/script/power.js"></script>
+
+    <script src="_content/Frontend/script/panzoom.min.js"></script>
+    <script src="_content/Frontend/script/gather.js"></script>
+    <script src="_content/Frontend/script/route.js"></script>
+</head>
+<body>
+    <app>
+        <Routes @rendermode="InteractiveServer" />
+    </app>
+
+    <div id="blazor-error-ui">
+    @if (Env.IsDevelopment())
+    {
+        <text>
+            An unhandled exception has occurred. See browser dev tools for details.
+        </text>
+    }
+    else
+    {
+        <text>
+            An error has occurred. This app may no longer respond until reloaded.
+        </text>
+    }
+    </div>
+
+    <script src="_framework/blazor.web.js"></script>
+</body>
+</html>

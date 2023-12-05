@@ -9,7 +9,7 @@ local CombatLogGetCurrentEventInfo = CombatLogGetCurrentEventInfo
 local GetSpellInfo = GetSpellInfo
 local GetSpellBaseCooldown = GetSpellBaseCooldown
 local GetTime = GetTime
-local GetGossipOptions = GetGossipOptions
+local GetGossipOptions = DataToColor.GetGossipOptions
 local HasAction = HasAction
 local CanMerchantRepair = CanMerchantRepair
 local GetRepairAllCost = GetRepairAllCost
@@ -30,6 +30,12 @@ local RepopMe = RepopMe
 local RetrieveCorpse = RetrieveCorpse
 local GetCorpseRecoveryDelay = GetCorpseRecoveryDelay
 
+local UnitIsTapDenied = UnitIsTapDenied
+
+local ContainerIDToInventoryID = DataToColor.ContainerIDToInventoryID
+local NUM_BAG_SLOTS = NUM_BAG_SLOTS
+
+local CAST_SENT = 999997
 local CAST_START = 999998
 local CAST_SUCCESS = 999999
 
@@ -90,6 +96,10 @@ local errorListMessages = {}
 function DataToColor:RegisterEvents()
     DataToColor:RegisterEvent("UI_ERROR_MESSAGE", 'OnUIErrorMessage')
     DataToColor:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED", 'UnfilteredCombatEvent')
+    DataToColor:RegisterEvent("UNIT_SPELLCAST_SENT", 'OnUnitSpellCastSent')
+    DataToColor:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", 'OnUnitSpellCastSucceeded')
+    DataToColor:RegisterEvent("UNIT_SPELLCAST_FAILED", 'OnUnitSpellCastFailed')
+    --DataToColor:RegisterEvent("UNIT_SPELLCAST_FAILED_QUIET", 'OnUnitSpellCastFailed')
     DataToColor:RegisterEvent('LOOT_READY', 'OnLootReady')
     DataToColor:RegisterEvent('LOOT_CLOSED', 'OnLootClosed')
     DataToColor:RegisterEvent('BAG_UPDATE', 'OnBagUpdate')
@@ -111,6 +121,20 @@ function DataToColor:RegisterEvents()
     DataToColor:RegisterEvent('ZONE_CHANGED_NEW_AREA', 'OnZoneChanged')
 
     DataToColor:RegisterEvent('PLAYER_REGEN_ENABLED', 'OnLeftCombat')
+
+    DataToColor:RegisterEvent('AUTOFOLLOW_BEGIN', 'AutoFollowBegin')
+    DataToColor:RegisterEvent('AUTOFOLLOW_END', 'AutoFollowEnd')
+
+    DataToColor:RegisterEvent('PLAYER_STARTED_MOVING', 'PlayerStartedMoving')
+    DataToColor:RegisterEvent('PLAYER_STOPPED_MOVING', 'PlayerStoppedMoving')
+
+    DataToColor:RegisterEvent('CHAT_MSG_WHISPER', 'OnMessageWhisper')
+    DataToColor:RegisterEvent('CHAT_MSG_SAY', 'OnMessageSay')
+    DataToColor:RegisterEvent('CHAT_MSG_YELL', 'OnMessageYell')
+    DataToColor:RegisterEvent('CHAT_MSG_EMOTE', 'OnMessageEmote')
+    DataToColor:RegisterEvent('CHAT_MSG_TEXT_EMOTE', 'OnMessageEmote')
+    DataToColor:RegisterEvent('CHAT_MSG_PARTY', 'OnMessageParty')
+    DataToColor:RegisterEvent('CHAT_MSG_PARTY_LEADER', 'OnMessageParty')
 
     -- Season of mastery / vanilla
     if WOW_PROJECT_ID == WOW_PROJECT_CLASSIC then
@@ -146,12 +170,14 @@ function DataToColor:OnUIErrorMessage(_, _, message)
     local code = errorListMessages[message] or 0
     if code > 0 then
         DataToColor.uiErrorMessage = code
+        DataToColor.uiErrorMessageTime = DataToColor.globalTime
         UIErrorsFrame:AddMessage(message, 0, 1, 0) -- show as green messasge
         return
     else
         for i, v in pairs(specialErrorS) do
             if string.find(message, i) then
                 DataToColor.uiErrorMessage = v
+                DataToColor.uiErrorMessageTime = DataToColor.globalTime
                 UIErrorsFrame:AddMessage(message, 0, 1, 0) -- show as green messasge
                 return
             end
@@ -262,7 +288,12 @@ function DataToColor:OnCombatEvent(...)
         destGUID == DataToColor.petGUID or
         DataToColor.playerPetSummons[destGUID]) then
         --DataToColor:Print("Damage Taken ", sourceGUID)
-        DataToColor.eligibleKillCredit[sourceGUID] = true
+
+        local targetGuid = UnitGUID(DataToColor.C.unitTarget)
+        if targetGuid == sourceGUID and not UnitIsTapDenied(DataToColor.C.unitTarget) then
+            DataToColor.eligibleKillCredit[sourceGUID] = true
+        end
+
         DataToColor.CombatDamageTakenQueue:push(DataToColor:getGuidFromUUID(sourceGUID))
     end
 
@@ -285,6 +316,7 @@ function DataToColor:OnCombatEvent(...)
 
         if playerSpellCastStarted[subEvent] then
             DataToColor.lastCastEvent = CAST_START
+            DataToColor.uiErrorMessageTime = DataToColor.globalTime
 
             -- Fix SoM
             if spellId == 0 or spellId == nil then
@@ -294,6 +326,7 @@ function DataToColor:OnCombatEvent(...)
             DataToColor.lastCastSpellId = spellId
 
             local _, gcdMS = GetSpellBaseCooldown(spellId)
+            gcdMS = gcdMS or 0
             DataToColor.lastCastGCD = gcdMS
             --DataToColor:Print(subEvent, " ", spellId, " ", gcdMS)
         end
@@ -312,10 +345,12 @@ function DataToColor:OnCombatEvent(...)
                 local failedMessage = select(15, ...)
                 DataToColor.lastCastEvent = errorListMessages[failedMessage] or 0
                 DataToColor.uiErrorMessage = DataToColor.lastCastEvent
+                DataToColor.uiErrorMessageTime = DataToColor.globalTime
                 --DataToColor:Print(subEvent, " ", lastCastEvent, " -> ", DataToColor.lastCastEvent, " ", failedMessage, " ", spellId)
             else
                 DataToColor.lastCastEvent = CAST_SUCCESS
                 --DataToColor:Print(subEvent, " ", spellId)
+                DataToColor.uiErrorMessageTime = DataToColor.globalTime
 
                 local hasGCD = true
 
@@ -355,7 +390,12 @@ function DataToColor:OnCombatEvent(...)
         -- matches SWING_ RANGE_ SPELL_ but not SPELL_PERIODIC
         if playerDamageDone[subEvent] or playerDamageMiss[subEvent] then
             --DataToColor:Print(subEvent, " ", destGUID)
-            DataToColor.eligibleKillCredit[destGUID] = true
+
+            local targetGuid = UnitGUID(DataToColor.C.unitTarget)
+            if targetGuid == destGUID and not UnitIsTapDenied(DataToColor.C.unitTarget) then
+                DataToColor.eligibleKillCredit[destGUID] = true
+            end
+
             DataToColor.CombatDamageDoneQueue:push(DataToColor:getGuidFromUUID(destGUID))
 
             if playerDamageMiss[subEvent] then
@@ -390,11 +430,14 @@ function DataToColor:OnCombatEvent(...)
         end
     end
 
-    if unitDied[subEvent] and DataToColor.eligibleKillCredit[destGUID] then
-        if band(destFlags, COMBATLOG_OBJECT_TYPE_NPC) > 0 then
+    if unitDied[subEvent] then
+        if band(destFlags, COMBATLOG_OBJECT_TYPE_NPC) > 0 and DataToColor.eligibleKillCredit[destGUID] then
             DataToColor.CombatCreatureDiedQueue:push(DataToColor:getGuidFromUUID(destGUID))
             DataToColor.lastLoot = DataToColor.C.Loot.Corpse
             --DataToColor:Print(subEvent, " ", destGUID, " ", DataToColor:getGuidFromUUID(destGUID))
+        elseif destGUID == DataToColor.playerGUID then
+            DataToColor.CombatCreatureDiedQueue:push(16777215)
+            --DataToColor:Print(subEvent, " player Death ", destGUID, " 16777215")
         elseif DataToColor.playerPetSummons[destGUID] then
             local guid = DataToColor:getGuidFromUUID(destGUID)
             DataToColor.playerPetSummons[guid] = nil
@@ -404,6 +447,33 @@ function DataToColor:OnCombatEvent(...)
             --DataToColor:Print(subEvent, " ignored ", destGUID)
         end
     end
+end
+
+function DataToColor:OnUnitSpellCastSent(event, unit, target, castGUID, spellId)
+    --print(event, unit, target, castGUID, spellId)
+    if unit ~= DataToColor.C.unitPlayer then return end
+
+    DataToColor.lastCastEvent = CAST_SENT
+    DataToColor.uiErrorMessageTime = DataToColor.globalTime
+    DataToColor.lastCastSpellId = spellId
+end
+
+function DataToColor:OnUnitSpellCastSucceeded(event, unit, castGUID, spellId)
+    --print(event, unit, castGUID, spellId)
+    if unit ~= DataToColor.C.unitPlayer then return end
+
+    DataToColor.lastCastEvent = CAST_SUCCESS
+    DataToColor.uiErrorMessageTime = DataToColor.globalTime
+    DataToColor.lastCastSpellId = spellId
+end
+
+function DataToColor:OnUnitSpellCastFailed(event, unit, castGUID, spellId)
+    --print(event, unit, castGUID, spellId)
+    if unit ~= DataToColor.C.unitPlayer then return end
+
+    DataToColor.lastCastEvent = DataToColor.uiErrorMessage
+    DataToColor.uiErrorMessageTime = DataToColor.globalTime
+    DataToColor.lastCastSpellId = spellId
 end
 
 function DataToColor:SoM_OnCastSuccess(event, unitTarget, castGuid, spellId)
@@ -433,12 +503,14 @@ function DataToColor:OnLootClosed(event)
 end
 
 function DataToColor:OnBagUpdate(event, containerID)
-    if containerID >= 0 and containerID <= 4 then
+    if containerID >= 0 and containerID <= NUM_BAG_SLOTS then
         DataToColor.bagQueue:push(containerID)
         DataToColor:InitInventoryQueue(containerID)
 
         if containerID >= 1 then
-            DataToColor.equipmentQueue:push(19 + containerID) -- from tabard
+            local invID = ContainerIDToInventoryID(containerID)
+            --DataToColor:Print("OnBagUpdate "..containerID.." invID "..invID)
+            DataToColor.equipmentQueue:push(invID)
         end
     end
     --DataToColor:Print("OnBagUpdate "..containerID)
@@ -490,7 +562,7 @@ function DataToColor:OnSpellsChanged(event)
 end
 
 function DataToColor:ActionbarSlotChanged(event, slot)
-    if slot and HasAction(slot) then
+    if slot and slot <= DataToColor.C.MAX_ACTIONBAR_SLOT and HasAction(slot) then
         DataToColor:populateActionbarCost(slot)
     end
 end
@@ -512,6 +584,7 @@ function DataToColor:ChatMessageOpeningEvent(event, ...)
     if isempty(playerName) and isempty(playerName2) then
         DataToColor.lastCastEvent = CAST_SUCCESS
         DataToColor.uiErrorMessage = CAST_SUCCESS
+        DataToColor.uiErrorMessageTime = DataToColor.globalTime
     end
 end
 
@@ -528,6 +601,61 @@ end
 function DataToColor:OnLeftCombat()
     DataToColor.eligibleKillCredit = {}
 end
+
+function DataToColor:AutoFollowBegin()
+    DataToColor.autoFollow = true
+end
+
+function DataToColor:AutoFollowEnd()
+    DataToColor.autoFollow = false
+end
+
+function DataToColor:PlayerStartedMoving()
+    DataToColor.moving = true
+end
+
+function DataToColor:PlayerStoppedMoving()
+    DataToColor.moving = false
+end
+
+function DataToColor:OnMessageWhisper(event, msg, author)
+    AddMessageToQueue(0, msg, author)
+end
+
+function DataToColor:OnMessageSay(event, msg, author)
+    AddMessageToQueue(1, msg, author)
+end
+
+function DataToColor:OnMessageYell(event, msg, author)
+    AddMessageToQueue(2, msg, author)
+end
+
+function DataToColor:OnMessageEmote(event, msg, author)
+    AddMessageToQueue(3, msg, author)
+end
+
+function DataToColor:OnMessageParty(event, msg, author)
+    AddMessageToQueue(4, msg, author)
+end
+
+function AddMessageToQueue(type, msg, author)
+    --print(author, msg)
+    --author split '-' MyName-Realm
+    local i, length = string.find(author, '-')
+    if i ~= nil then
+        length = length - 1
+    else
+        length = string.len(author)
+    end
+    author = string.sub(author, 1, length)
+
+    msg = author .. ' ' .. msg
+
+    --print(type, string.len(msg), msg)
+
+    DataToColor.ChatQueue:push({ type = type, length = string.len(msg), msg = msg })
+end
+
 
 local CORPSE_RETRIEVAL_DISTANCE = 40
 

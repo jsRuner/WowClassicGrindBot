@@ -4,18 +4,27 @@
 @using System.IO
 @using System.Numerics
 @using SharedLib.Extensions
+@using Core.Database
+@using System.Runtime.InteropServices
 
 @inject IAddonReader addonReader
+@inject PlayerReader PlayerReader
 @inject IBotController botController
 @inject IJSRuntime JSRuntime
 @inject DataConfig dataConfig
+@inject AreaDB areaDB
+@inject WApi wapi
 
 <div class="row">
     <div class="col-sm">
         <h3>Path Editor/Recorder</h3>
         @if (!recording)
         {
-            <button class="btn btn-primary" @onclick="StartRecording">Record New</button>
+            <button class="btn btn-danger" @onclick="() => StartRecording(true)">Record New</button>
+            @if (editPath.Count > 0)
+            {
+                <button class="btn btn-primary" @onclick="() => StartRecording(false)">Continue Recording</button>
+            }
         }
         @if (!editing)
         {
@@ -25,24 +34,34 @@
         {
             <div>
                 <button class="btn btn-success"
-                    disabled="@(editPath.Count == 0 ? "disabled" : null)"
-                    @onclick="SaveToFile">
-                    Save to file & use path
+                        disabled=@(editPath.Count == 0)
+                @onclick="() => SaveToFile(false)">
+                    Save to new file & use path
                 </button>
-                <button class="btn btn-info"
-                    disabled="@(editPath.Count == 0 ? "disabled" : null)"
-                    @onclick="Use">
-                    Use path without save
+                <button class="btn btn-primary"
+                        disabled=@(editPath.Count == 0)
+                @onclick="Use">
+                    Use new path without save
                 </button>
-                <button class="btn btn-danger" @onclick="Clear">Clear</button>
+                @if (editPath.Count > 0)
+                {
+                    <button class="btn btn-danger" @onclick="Clear">Clear</button>
+                }
+            </div>
+            <div>
+                <button class="btn btn-warning"
+                        disabled=@(editPath.Count == 0)
+                @onclick="() => SaveToFile(true)">
+                    Save to <b>@(loadedPathFile)</b>
+                </button>
             </div>
         }
         <div>@message</div>
     </div>
     <div class="col-sm">
         <h3><span style="color:orange">&#9650;</span> Player</h3>
-        <input type="text" class="col-sm-2 form-control" disabled="disabled" value="@addonReader.PlayerReader.MapX" />
-        <input type="text" class="col-sm-2 form-control" disabled="disabled" value="@addonReader.PlayerReader.MapY" />
+        <input type="text" class="col-sm-2 form-control" disabled="disabled" value="@PlayerReader.MapX" />
+        <input type="text" class="col-sm-2 form-control" disabled="disabled" value="@PlayerReader.MapY" />
         <hr>
     </div>
 </div>
@@ -53,7 +72,7 @@
             <svg width="@(Size)px" height="@(Size)px">
                 <g class="background"></g>
 
-                <g id="playerloc" transform='translate(@(routeInfo.ToCanvasPointX(addonReader.PlayerReader.MapX)-5), @(routeInfo.ToCanvasPointY(addonReader.PlayerReader.MapY)-5)) rotate(@PlayerDir 5 5)'>
+                <g id="playerloc" transform='translate(@(routeInfo.ToCanvasPointX(PlayerReader.MapX)-5), @(routeInfo.ToCanvasPointY(PlayerReader.MapY)-5)) rotate(@PlayerDir 5 5)'>
                     <svg width="10" height="10">
                         <polygon points="5,0 8.5,8.5 1.5,8.5 5,0" fill="orange" />
                     </svg>
@@ -77,9 +96,9 @@
                     {
                         <g>
                             <circle fill="transparent" stroke="black"
-                                cx='@(routeInfo.ToCanvasPointX(editPath.Last().X))'
-                                cy='@(routeInfo.ToCanvasPointY(editPath.Last().Y))'
-                                r='@(routeInfo.DistanceToGrid(Distance))' />
+                                    cx='@(routeInfo.ToCanvasPointX(editPath.Last().X))'
+                                    cy='@(routeInfo.ToCanvasPointY(editPath.Last().Y))'
+                                    r='@(routeInfo.DistanceToGrid(Distance))' />
                         </g>
                     }
                 </g>
@@ -122,8 +141,8 @@
                             <hr />
                             <button class="btn btn-danger" @onclick="RemoveAllSelected">Remove</button>
                             <hr />
-                            <button class="btn btn-primary"
-                            disabled="@(this.selectedPoint != this.previewPoint ? null : "disabled")"
+                            <button class="btn btn-warning"
+                                    disabled="@(this.selectedPoint != this.previewPoint ? null : "disabled")"
                             @onclick="UpdateSelectedWithPreview">
                                 Move to preview
                             </button>
@@ -143,6 +162,7 @@
                 <hr>
             }
             <button class="btn btn-danger" @onclick="HalvenPoints">Halven points</button>
+            <button class="btn btn-success" @onclick="DoublePoints">Double points</button>
 
             <div>@error</div>
             <br />
@@ -182,7 +202,7 @@
 @code {
 
     private int Size = 600;
-    private int Margin = 30;
+    private int Margin = 60;
 
     protected bool recording;
     protected bool editing;
@@ -192,7 +212,7 @@
     protected MarkupString SelectedPoints = new MarkupString();
     protected MarkupString PreviewPoints = new MarkupString();
 
-    protected float PlayerDir => -addonReader.PlayerReader.Direction * (180f / MathF.PI);
+    protected float PlayerDir => -PlayerReader.Direction * (180f / MathF.PI);
 
     protected int MIN_DISTANCE = 1;
     protected int MAX_DISTANCE = 100;
@@ -225,11 +245,19 @@
 
     private RouteInfo routeInfo = null!;
 
-    private List<Vector3> editPath = new();
+    private List<Vector3> editPath { get; set; } = new();
+
+    private string loadedPathFile => botController.ClassConfig!.PathFilename.Replace(dataConfig.Path, "");
+
+    private string areaName = string.Empty;
 
     protected override void OnInitialized()
     {
         routeInfo = botController.RouteInfo!;
+
+        areaDB.Changed += OnZoneChanged;
+
+        UpdateZoneName();
 
         editPath = routeInfo.Route.ToList();
 
@@ -252,29 +280,47 @@
     {
         addonReader.AddonDataChanged -= OnAddonDataChanged;
 
+        areaDB.Changed -= OnZoneChanged;
+
         await JSRuntime.InvokeVoidAsync("dispose");
     }
 
 
     private void OnAddonDataChangedAction()
     {
-        if (!UpdateRecording() && lastPlayerPoint != addonReader.PlayerReader.MapPos)
+        if (!UpdateRecording() && lastPlayerPoint != PlayerReader.MapPosNoZ)
         {
-            lastPlayerPoint = addonReader.PlayerReader.MapPos;
+            lastPlayerPoint = PlayerReader.MapPosNoZ;
             UpdateRouteMarkup();
             StateHasChanged();
         }
 
         /*
         // requires async
-        var p = addonReader.PlayerReader.PlayerLocation;
+        var p = PlayerReader.PlayerLocation;
             var pp = new Vector3(
             route.ToCanvasPointX(p.X),
             route.ToCanvasPointY(p.Y),
         0);
 
         await JSRuntime.InvokeVoidAsync("focusAt", JsonConvert.SerializeObject(pp));
-        */
+    */
+    }
+
+    private void UpdateZoneName()
+    {
+        areaName = PlayerReader.WorldMapArea.AreaName;
+    }
+
+    private void ActionZoneChangedAction()
+    {
+        UpdateZoneName();
+        StateHasChanged();
+    }
+
+    private void OnZoneChanged()
+    {
+        base.InvokeAsync(ActionZoneChangedAction);
     }
 
     private void OnAddonDataChanged()
@@ -302,12 +348,23 @@
 
         if (editPath.Count > 0)
         {
-            this.PathLines = new MarkupString(routeInfo.RenderPathLines(editPath.ToArray()));
-            this.PathPoints = new MarkupString(routeInfo.RenderPathPoints(editPath.Where(p => p != this.selectedPoint).ToArray()));
-            this.SelectedPoints = new MarkupString(routeInfo.RenderPathPoints(new Vector3[] { this.selectedPoint }));
+            var span = CollectionsMarshal.AsSpan(editPath);
+            Span<Vector3> span1 = stackalloc Vector3[1];
+            span1[0] = this.selectedPoint;
+
+            this.PathLines =
+                new MarkupString(routeInfo.RenderPathLines(span));
+            this.PathPoints =
+                new MarkupString(routeInfo.RenderPathPoints(span));
+
+            this.SelectedPoints =
+                new MarkupString(routeInfo.RenderPathPoints(span1));
+
             if (this.selectedPoint != this.previewPoint)
             {
-                this.PreviewPoints = new MarkupString(routeInfo.RenderPathPoints(new Vector3[] { this.previewPoint }));
+                span1[0] = this.previewPoint;
+                this.PreviewPoints =
+                new MarkupString(routeInfo.RenderPathPoints(span1));
             }
             else
             {
@@ -333,7 +390,6 @@
     {
         recording = false;
 
-        // ugh
         editPath.Clear();
 
         cachedIndex = 0;
@@ -348,14 +404,27 @@
         UpdateRouteMarkup();
     }
 
-    protected void SaveToFile()
+    protected void SaveToFile(bool overwriteClassConfigFile)
     {
         recording = false;
 
-        string filename = $"__Path_{DateTime.Now.ToString("yyyy_MM_dd_HH_mm_ss")}.json";
-        string filepath = Path.Join(dataConfig.Path, filename);
+        string filename =
+            overwriteClassConfigFile
+            ? Path.ChangeExtension(loadedPathFile, "").TrimEnd('.')
+            : $"{areaName}_{DateTime.Now.ToString("yyyy_MM_dd_HH_mm_ss")}";
+
+        string filepath = Path.Join(dataConfig.Path, $"{filename}.json");
         File.WriteAllText(filepath, JsonConvert.SerializeObject(editPath));
         message = $"Saved to: {filepath}";
+
+        try
+        {
+            string imgFilepath = Path.Join(dataConfig.Path, $"{filename}.jpg");
+            string mapUrl = wapi.GetMapImage(PlayerReader.WorldMapArea.AreaID);
+
+            PathDrawer.Execute(editPath, mapUrl, imgFilepath);
+        }
+        catch { }
 
         routeInfo.UpdateRoute(editPath.ToArray());
     }
@@ -370,13 +439,18 @@
         routeInfo.UpdateRoute(editPath.ToArray());
     }
 
-    protected void StartRecording()
+    protected void StartRecording(bool clear)
     {
         recording = true;
         editing = false;
 
-        editPath.Clear();
-        routeInfo.PoiList.Clear();
+        if (clear)
+        {
+            editPath.Clear();
+            routeInfo.PoiList.Clear();
+        }
+
+        botController.RouteInfo?.SetRouteSource(editPath);
 
         ClearMarkup();
 
@@ -389,7 +463,7 @@
     {
         if (!recording) { return false; }
 
-        Vector3 map = addonReader.PlayerReader.MapPos;
+        Vector3 map = PlayerReader.MapPosNoZ;
 
         if (editPath.Count == 0 ||
             map.MapDistanceXYTo(editPath.Last()) > Distance)
@@ -446,7 +520,7 @@
 
     protected void UpdateSelectedWithPlayer()
     {
-        UpdateSourcePoint(ref selectedPoint, addonReader.PlayerReader.MapPos);
+        UpdateSourcePoint(ref selectedPoint, PlayerReader.MapPosNoZ);
     }
 
     protected void UpdateSelectedWithPreview()
@@ -540,7 +614,9 @@
         int index = editPath.FindIndex(p => p == selectedPoint);
         if (index == -1) return;
 
-        var target = addonReader.PlayerReader.MapPos;
+        var target = PlayerReader.MapPosNoZ;
+        target.Z = 0;
+
         editPath.Insert(index + 1, target);
 
         selectedPoint = target;
@@ -549,7 +625,27 @@
 
     protected void HalvenPoints()
     {
-        editPath = editPath.Where((x, i) => i % 2 == 0).ToList();
+        editPath = editPath.Where(EverySecondOne).ToList();
+        static bool EverySecondOne(Vector3 v, int i) => i % 2 == 0;
+
+        UpdateRouteMarkup();
+    }
+
+    protected void DoublePoints()
+    {
+        for (int i = 1; i < editPath.Count; i += 2)
+        {
+            Vector3 c = editPath[i];
+            Vector3 p = editPath[i - 1];
+
+            Vector3 newP = new(
+                (c.X + p.X) / 2f,
+                (c.Y + p.Y) / 2f,
+                0);
+
+            editPath.Insert(i, newP);
+        }
+
         UpdateRouteMarkup();
     }
 

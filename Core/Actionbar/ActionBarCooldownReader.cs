@@ -1,59 +1,63 @@
 ﻿using System;
 
-namespace Core
+using static Core.ActionBar;
+using static System.Math;
+using static System.DateTime;
+
+namespace Core;
+
+public sealed class ActionBarCooldownReader : IReader
 {
-    public sealed class ActionBarCooldownReader
+    private readonly struct Data
     {
-        private readonly struct Data
+        private readonly float durationSec;
+        private readonly DateTime start;
+
+        public DateTime End => start.AddSeconds(durationSec);
+
+        public Data(float durationSec, DateTime start)
         {
-            public float DurationSec { get; }
-            public DateTime StartTime { get; }
-
-            public Data(float duration, DateTime startTime)
-            {
-                DurationSec = duration;
-                StartTime = startTime;
-            }
+            this.durationSec = durationSec;
+            this.start = start;
         }
+    }
 
-        private const float FRACTION_PART = 10f;
+    private const float FRACTION_PART = 10f;
 
-        private readonly int cActionbarNum;
+    private const int cActionbarNum = 37;
 
-        private readonly Data[] data;
+    private readonly Data[] data;
 
-        public ActionBarCooldownReader(int cActionbarNum)
-        {
-            this.cActionbarNum = cActionbarNum;
+    public ActionBarCooldownReader()
+    {
+        data = new Data[CELL_COUNT * BIT_PER_CELL];
+        Reset();
+    }
 
-            data = new Data[ActionBar.CELL_COUNT * ActionBar.BIT_PER_CELL];
-            Reset();
-        }
+    public void Update(IAddonDataProvider reader)
+    {
+        int value = reader.GetInt(cActionbarNum);
+        if (value == 0 || value < ACTION_SLOT_MUL)
+            return;
 
-        public void Read(IAddonDataProvider reader)
-        {
-            int value = reader.GetInt(cActionbarNum);
-            if (value == 0 || value < ActionBar.ACTION_SLOT_MUL)
-                return;
+        int slotIdx = (value / ACTION_SLOT_MUL) - 1;
+        float durationSec = value % ACTION_SLOT_MUL / FRACTION_PART;
 
-            int slotIdx = (value / ActionBar.ACTION_SLOT_MUL) - 1;
-            float durationSec = value % ActionBar.ACTION_SLOT_MUL / FRACTION_PART;
+        data[slotIdx] = new(durationSec, UtcNow);
+    }
 
-            data[slotIdx] = new(durationSec, DateTime.UtcNow);
-        }
+    public void Reset()
+    {
+        var span = data.AsSpan();
+        span.Fill(new(0, UtcNow));
+    }
 
-        public void Reset()
-        {
-            for (int i = 0; i < data.Length; i++)
-            {
-                data[i] = new(0, DateTime.UtcNow);
-            }
-        }
+    public int Get(KeyAction keyAction)
+    {
+        int index = keyAction.SlotIndex;
 
-        public int GetRemainingCooldown(KeyAction keyAction)
-        {
-            int index = keyAction.SlotIndex;
-            return Math.Clamp((int)(data[index].StartTime.AddSeconds(data[index].DurationSec) - DateTime.UtcNow).TotalMilliseconds, 0, int.MaxValue);
-        }
+        ref readonly Data d = ref data[index];
+
+        return Max((int)(d.End - UtcNow).TotalMilliseconds, 0);
     }
 }

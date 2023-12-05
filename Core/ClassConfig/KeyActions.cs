@@ -1,59 +1,35 @@
 ﻿using Microsoft.Extensions.Logging;
 using System;
 
-namespace Core
+namespace Core;
+
+public class KeyActions
 {
-    public sealed partial class KeyActions : IDisposable
+    public KeyAction[] Sequence { get; set; } =
+        Array.Empty<KeyAction>();
+
+    public virtual void InitBinds(ILogger logger,
+        RequirementFactory factory)
     {
-        public KeyAction[] Sequence { get; init; } = Array.Empty<KeyAction>();
-
-        public void PreInitialise(string prefix, RequirementFactory requirementFactory, ILogger logger)
+        for (int i = 0; i < Sequence.Length; i++)
         {
-            if (Sequence.Length > 0)
-            {
-                LogDynamicBinding(logger, prefix);
-            }
+            KeyAction keyAction = Sequence[i];
 
-            for (int i = 0; i < Sequence.Length; i++)
-            {
-                KeyAction keyAction = Sequence[i];
-                keyAction.InitialiseSlot(logger);
-                keyAction.InitDynamicBinding(requirementFactory);
-            }
+            keyAction.InitSlot(logger);
+            factory.InitAutoBinds(keyAction);
         }
+    }
 
-        public void Initialise(string prefix, ClassConfiguration config, AddonReader addonReader, RequirementFactory requirementFactory, ILogger logger, bool globalLog)
+    public void Init(ILogger logger, bool globalLog,
+        PlayerReader playerReader, RecordInt globalTime,
+        RequirementFactory factory)
+    {
+        for (int i = 0; i < Sequence.Length; i++)
         {
-            if (Sequence.Length > 0)
-            {
-                LogInitKeyActions(logger, prefix);
-            }
+            KeyAction keyAction = Sequence[i];
 
-            for (int i = 0; i < Sequence.Length; i++)
-            {
-                Sequence[i].Initialise(config, addonReader, requirementFactory, logger, globalLog, this);
-            }
+            keyAction.Init(logger, globalLog, playerReader, globalTime);
+            factory.Init(keyAction);
         }
-
-        public void Dispose()
-        {
-            for (int i = 0; i < Sequence.Length; i++)
-            {
-                Sequence[i].Dispose();
-            }
-        }
-
-        [LoggerMessage(
-            EventId = 10,
-            Level = LogLevel.Information,
-            Message = "[{prefix}] CreateDynamicBindings.")]
-        static partial void LogDynamicBinding(ILogger logger, string prefix);
-
-        [LoggerMessage(
-            EventId = 11,
-            Level = LogLevel.Information,
-            Message = "[{prefix}] Initialise KeyActions.")]
-        static partial void LogInitKeyActions(ILogger logger, string prefix);
-
     }
 }

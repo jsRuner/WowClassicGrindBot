@@ -1,36 +1,16 @@
-﻿using Serilog;
-using Serilog.Configuration;
+﻿using System;
+
 using Serilog.Core;
 using Serilog.Events;
-using System;
 
-namespace PathingAPI
+namespace PathingAPI;
+
+public sealed class PathingAPILoggerSink : ILogEventSink
 {
-    public static class PathingAPILoggerSinkExtensions
+    public event Action<LogEvent> OnLog;
+
+    public void Emit(LogEvent logEvent)
     {
-        public static LoggerConfiguration PathingAPILoggerSink(this LoggerSinkConfiguration loggerConfiguration)
-        {
-            return loggerConfiguration.Sink(new PathingAPILoggerSink());
-        }
-    }
-
-    public sealed class PathingAPILoggerSink : ILogEventSink
-    {
-        public static event Action<LogEvent> OnLog;
-
-        public void Emit(LogEvent logEvent)
-        {
-            OnLog?.Invoke(logEvent);
-        }
-
-        public override bool Equals(object obj)
-        {
-            return obj is PathingAPILoggerSink;
-        }
-
-        public override int GetHashCode()
-        {
-            return 0;
-        }
+        OnLog?.Invoke(logEvent);
     }
 }

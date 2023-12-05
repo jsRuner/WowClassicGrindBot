@@ -1,45 +1,18 @@
 ﻿using System;
 
-namespace Core
+namespace Core;
+
+public interface IAddonReader
 {
-    public interface IAddonReader
-    {
-        PlayerReader PlayerReader { get; }
+    double AvgUpdateLatency { get; }
 
-        BagReader BagReader { get; }
+    string TargetName { get; }
 
-        EquipmentReader EquipmentReader { get; }
+    event Action? AddonDataChanged;
 
-        ActionBarCostReader ActionBarCostReader { get; }
+    void FullReset();
 
-        ActionBarCooldownReader ActionBarCooldownReader { get; }
-
-        AuraTimeReader PlayerBuffTimeReader { get; }
-
-        AuraTimeReader TargetDebuffTimeReader { get; }
-
-        SpellBookReader SpellBookReader { get; }
-
-        TalentReader TalentReader { get; }
-
-        LevelTracker LevelTracker { get; }
-
-        double AvgUpdateLatency { get; }
-
-        int DamageTakenCount();
-
-        string TargetName { get; }
-
-        event Action? AddonDataChanged;
-        event Action? PlayerDeath;
-
-        void FetchData();
-        void FullReset();
-
-        void Update();
-        void UpdateUI();
-        void SessionReset();
-
-        int GetInt(int index);
-    }
+    void Update();
+    void UpdateUI();
+    void SessionReset();
 }

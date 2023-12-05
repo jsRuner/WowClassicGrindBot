@@ -1,35 +1,39 @@
-﻿namespace Core.Goals
+﻿namespace Core.Goals;
+
+public sealed class BlacklistTargetGoal : GoapGoal
 {
-    public sealed class BlacklistTargetGoal : GoapGoal
+    public override float Cost => 2;
+
+    private readonly PlayerReader playerReader;
+    private readonly AddonBits bits;
+    private readonly ConfigurableInput input;
+    private readonly IBlacklist targetBlacklist;
+
+    public BlacklistTargetGoal(PlayerReader playerReader,
+        AddonBits bits,
+        ConfigurableInput input, IBlacklist blacklist)
+        : base(nameof(BlacklistTargetGoal))
     {
-        public override float Cost => 2;
+        this.playerReader = playerReader;
+        this.bits = bits;
+        this.input = input;
+        this.targetBlacklist = blacklist;
+        this.bits = bits;
+    }
 
-        private readonly PlayerReader playerReader;
-        private readonly ConfigurableInput input;
-        private readonly IBlacklist targetBlacklist;
+    public override bool CanRun()
+    {
+        return bits.Target() && targetBlacklist.Is();
+    }
 
-        public BlacklistTargetGoal(PlayerReader playerReader, ConfigurableInput input, IBlacklist blacklist)
-            : base(nameof(BlacklistTargetGoal))
-        {
-            this.playerReader = playerReader;
-            this.input = input;
-            this.targetBlacklist = blacklist;
-        }
+    public override void OnEnter()
+    {
+        if (playerReader.PetTarget() ||
+            playerReader.IsCasting() ||
+            bits.Auto_Attack() || bits.AutoShot() ||
+            bits.Shoot())
+            input.PressStopAttack();
 
-        public override bool CanRun()
-        {
-            return playerReader.Bits.HasTarget() && targetBlacklist.Is();
-        }
-
-        public override void OnEnter()
-        {
-            if (playerReader.PetHasTarget() ||
-                playerReader.IsCasting() ||
-                playerReader.Bits.SpellOn_AutoAttack() || playerReader.Bits.SpellOn_AutoShot() ||
-                playerReader.Bits.SpellOn_Shoot())
-                input.StopAttack();
-
-            input.ClearTarget();
-        }
+        input.PressClearTarget();
     }
 }

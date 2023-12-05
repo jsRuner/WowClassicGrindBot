@@ -1,16 +1,15 @@
-﻿using System.Drawing;
+﻿using SixLabors.ImageSharp;
 using System.Threading;
 
-namespace Game
+namespace Game;
+
+public interface IMouseInput
 {
-    public interface IMouseInput
-    {
-        void SetCursorPosition(Point p);
+    void SetCursorPos(Point p);
 
-        void RightClickMouse(Point p);
+    void RightClick(Point p);
 
-        void LeftClickMouse(Point p);
+    void LeftClick(Point p);
 
-        void InteractMouseOver(CancellationToken ct);
-    }
+    void InteractMouseOver(CancellationToken token);
 }

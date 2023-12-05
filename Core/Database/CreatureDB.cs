@@ -1,25 +1,30 @@
-﻿using System.Collections.Generic;
+﻿using System.Collections.Frozen;
+using System.Collections.Generic;
+using System;
+
+using SharedLib;
+
 using static System.IO.File;
 using static System.IO.Path;
 using static Newtonsoft.Json.JsonConvert;
 
-using SharedLib;
+namespace Core.Database;
 
-namespace Core.Database
+public sealed class CreatureDB
 {
-    public sealed class CreatureDB
+    public FrozenDictionary<int, string> Entries { get; }
+
+    public CreatureDB(DataConfig dataConfig)
     {
-        public Dictionary<int, Creature> Entries { get; } = new();
+        ReadOnlySpan<Creature> creatures = DeserializeObject<Creature[]>(
+            ReadAllText(Join(dataConfig.ExpDbc, "creatures.json")))!;
 
-        public CreatureDB(DataConfig dataConfig)
+        Dictionary<int, string> entries = [];
+        for (int i = 0; i < creatures.Length; i++)
         {
-            var creatures = DeserializeObject<Creature[]>(ReadAllText(Join(dataConfig.ExpDbc, "creatures.json")))!;
-
-            for (int i = 0; i < creatures.Length; i++)
-            {
-                Entries.Add(creatures[i].Entry, creatures[i]);
-            }
+            entries.Add(creatures[i].Entry, creatures[i].Name);
         }
 
+        Entries = entries.ToFrozenDictionary();
     }
 }

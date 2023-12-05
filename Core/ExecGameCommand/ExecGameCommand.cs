@@ -3,43 +3,38 @@ using System;
 using System.Threading;
 using Microsoft.Extensions.Logging;
 
-namespace Core
+namespace Core;
+
+public sealed class ExecGameCommand
 {
-    public sealed class ExecGameCommand
+    private readonly ILogger<ExecGameCommand> logger;
+    private readonly WowProcessInput input;
+    private readonly CancellationToken token;
+
+    public ExecGameCommand(ILogger<ExecGameCommand> logger,
+        CancellationTokenSource cts, WowProcessInput input)
     {
-        private readonly ILogger logger;
-        private readonly WowProcessInput wowProcessInput;
-        private readonly CancellationToken ct;
+        this.logger = logger;
+        token = cts.Token;
+        this.input = input;
+    }
 
-        public ExecGameCommand(ILogger logger, CancellationTokenSource cts, WowProcessInput wowProcessInput)
-        {
-            this.logger = logger;
-            ct = cts.Token;
-            this.wowProcessInput = wowProcessInput;
-        }
+    public void Run(string content)
+    {
+        input.SetForegroundWindow();
+        logger.LogInformation(content);
 
-        public void Run(string content)
-        {
-            wowProcessInput.SetForegroundWindow();
-            logger.LogInformation(content);
+        input.SetClipboard(content);
+        token.WaitHandle.WaitOne(Random.Shared.Next(100, 250));
 
-            wowProcessInput.SetClipboard(content);
-            Wait(100, 250);
+        // Open chat inputbox
+        input.PressRandom(ConsoleKey.Enter, 100, token);
 
-            // Open chat inputbox
-            wowProcessInput.KeyPress(ConsoleKey.Enter, Random.Shared.Next(50, 100));
+        input.PasteFromClipboard();
+        token.WaitHandle.WaitOne(Random.Shared.Next(100, 250));
 
-            wowProcessInput.PasteFromClipboard();
-            Wait(100, 250);
-
-            // Close chat inputbox
-            wowProcessInput.KeyPress(ConsoleKey.Enter, Random.Shared.Next(50, 100));
-            Wait(100, 250);
-        }
-
-        private void Wait(int min, int max)
-        {
-            ct.WaitHandle.WaitOne(Random.Shared.Next(min, max));
-        }
+        // Close chat inputbox
+        input.PressRandom(ConsoleKey.Enter, 100, token);
+        token.WaitHandle.WaitOne(Random.Shared.Next(100, 250));
     }
 }

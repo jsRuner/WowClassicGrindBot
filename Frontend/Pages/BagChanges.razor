@@ -1,5 +1,6 @@
 ﻿@inject IJSRuntime JSRuntime
-@inject IAddonReader addonReader
+
+@inject BagReader bagReader
 
 @implements IDisposable
 
@@ -15,8 +16,13 @@
         <div class="card-body">
             @foreach (var bagItem in NewItems)
             {
-                <div class="animate__animated animate__backInUp">
-                    <BagItemComponent BagItem="bagItem" ShowChangesPrice="true" />
+                <div class="animate__animated animate__slideInDown">
+                    <ItemComponent Item="bagItem.Item"
+                                   Count="bagItem.Count"
+                                   LastCount="bagItem.LastCount"
+                                   LastChange="bagItem.LastChange"
+                                   LastUpdated="bagItem.LastUpdated"
+                                   ShowChangesPrice="true" />
                     <hr style="margin:2px" />
                 </div>
             }
@@ -25,7 +31,7 @@
 }
 @code {
 
-    private const int MaxItemToShow = 14;
+    private const int MaxItemToShow = 12;
     private const int MaxLifeTimeSec = 15;
 
     private Timer timer = null!;
@@ -36,16 +42,17 @@
 
     protected override void OnInitialized()
     {
-        NewItems = addonReader.BagReader.BagItems.Where(WasRecentlyUpdated);
+        NewItems = bagReader.BagItems
+            .Where(WasRecentlyUpdated).Take(MaxItemToShow);
 
-        addonReader.BagReader.DataChanged += OnBagReaderDataChanged;
+        bagReader.DataChanged += OnBagReaderDataChanged;
 
         timer = new Timer(TimerTick);
     }
 
     public void Dispose()
     {
-        addonReader.BagReader.DataChanged -= OnBagReaderDataChanged;
+        bagReader.DataChanged -= OnBagReaderDataChanged;
         timer.Dispose();
     }
 
@@ -65,13 +72,15 @@
         return item.LastChange * item.Item.SellPrice;
     }
 
-    private bool WasRecentlyUpdated(BagItem item) => (DateTime.UtcNow - item.LastUpdated).TotalSeconds < MaxLifeTimeSec;
+    private bool WasRecentlyUpdated(BagItem item) =>
+        (DateTime.UtcNow - item.LastUpdated).TotalSeconds < MaxLifeTimeSec;
 
-    private DateTime ExpireTime(BagItem item) => item.LastUpdated.AddSeconds(MaxLifeTimeSec);
+    private DateTime ExpireTime(BagItem item) =>
+        item.LastUpdated.AddSeconds(MaxLifeTimeSec);
 
     public void OnBagReaderDataChanged()
     {
-        NewItems = addonReader.BagReader.BagItems.Where(WasRecentlyUpdated);
+        NewItems = bagReader.BagItems.Where(WasRecentlyUpdated);
 
         if (NewItems.Count() > MaxItemToShow)
         {

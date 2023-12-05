@@ -1,82 +1,53 @@
 ﻿using System;
 
-namespace Core
+namespace Core;
+
+public sealed class LevelTracker : IDisposable
 {
-    public sealed class LevelTracker : IDisposable
+    private readonly PlayerReader playerReader;
+
+    private DateTime levelStartTime = DateTime.UtcNow;
+    private int levelStartXP;
+
+    public TimeSpan TimeToLevel { get; private set; } = TimeSpan.Zero;
+    public DateTime PredictedLevelUpTime { get; private set; } = DateTime.MaxValue;
+
+    public LevelTracker(PlayerReader playerReader)
     {
-        private readonly AddonReader addonReader;
-        private readonly PlayerReader playerReader;
+        this.playerReader = playerReader;
 
-        private DateTime levelStartTime = DateTime.UtcNow;
-        private int levelStartXP;
+        playerReader.Level.Changed += PlayerLevel_Changed;
+        playerReader.PlayerXp.Changed += PlayerExp_Changed;
+    }
 
-        public TimeSpan TimeToLevel { get; private set; } = TimeSpan.Zero;
-        public DateTime PredictedLevelUpTime { get; private set; } = DateTime.MaxValue;
+    public void Dispose()
+    {
+        playerReader.Level.Changed -= PlayerLevel_Changed;
+        playerReader.PlayerXp.Changed -= PlayerExp_Changed;
+    }
 
-        public int MobsKilled { get; private set; }
-        public int Death { get; private set; }
+    private void PlayerExp_Changed()
+    {
+        UpdateExpPerHour();
+    }
 
-        public LevelTracker(AddonReader addonReader)
+    private void PlayerLevel_Changed()
+    {
+        levelStartTime = DateTime.UtcNow;
+        levelStartXP = playerReader.PlayerXp.Value;
+    }
+
+    public void UpdateExpPerHour()
+    {
+        double runningSeconds = (DateTime.UtcNow - levelStartTime).TotalSeconds;
+        double xpPerSecond = (playerReader.PlayerXp.Value - levelStartXP) / runningSeconds;
+        double secondsLeft = (playerReader.PlayerMaxXp - playerReader.PlayerXp.Value) / xpPerSecond;
+
+        TimeToLevel = xpPerSecond > 0 ? TimeSpan.FromSeconds(secondsLeft) : TimeSpan.Zero;
+
+        if (secondsLeft > 0 && secondsLeft < 60 * 60 * 10)
         {
-            this.addonReader = addonReader;
-            this.playerReader = addonReader.PlayerReader;
-
-            playerReader.Level.Changed += PlayerLevel_Changed;
-            playerReader.PlayerXp.Changed += PlayerExp_Changed;
-
-            addonReader.PlayerDeath += OnPlayerDeath;
-            addonReader.CombatLog.KillCredit += OnKillCredit;
-        }
-
-        public void Dispose()
-        {
-            playerReader.Level.Changed -= PlayerLevel_Changed;
-            playerReader.PlayerXp.Changed -= PlayerExp_Changed;
-            addonReader.PlayerDeath -= OnPlayerDeath;
-            addonReader.CombatLog.KillCredit -= OnKillCredit;
-        }
-
-        public void Reset()
-        {
-            MobsKilled = 0;
-            Death = 0;
-
-            UpdateExpPerHour();
-        }
-
-        private void PlayerExp_Changed()
-        {
-            UpdateExpPerHour();
-        }
-
-        private void PlayerLevel_Changed()
-        {
-            levelStartTime = DateTime.UtcNow;
-            levelStartXP = playerReader.PlayerXp.Value;
-        }
-
-        private void OnPlayerDeath()
-        {
-            Death++;
-        }
-
-        private void OnKillCredit()
-        {
-            MobsKilled++;
-        }
-
-        public void UpdateExpPerHour()
-        {
-            double runningSeconds = (DateTime.UtcNow - levelStartTime).TotalSeconds;
-            double xpPerSecond = (playerReader.PlayerXp.Value - levelStartXP) / runningSeconds;
-            double secondsLeft = (playerReader.PlayerMaxXp - playerReader.PlayerXp.Value) / xpPerSecond;
-
-            TimeToLevel = xpPerSecond > 0 ? new TimeSpan(0, 0, (int)secondsLeft) : TimeSpan.Zero;
-
-            if (secondsLeft > 0 && secondsLeft < 60 * 60 * 10)
-            {
-                PredictedLevelUpTime = DateTime.UtcNow.AddSeconds(secondsLeft).ToLocalTime();
-            }
+            PredictedLevelUpTime = DateTime.UtcNow.AddSeconds(secondsLeft).ToLocalTime();
         }
     }
 }

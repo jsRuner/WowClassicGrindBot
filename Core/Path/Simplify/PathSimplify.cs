@@ -1,158 +1,145 @@
 ﻿using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Numerics;
 
-namespace Core
+namespace Core;
+
+public static class PathSimplify
 {
-    public static class PathSimplify
+    // square distance from a Vector3 to a segment
+    private static float GetSquareSegmentDistance(in Vector3 p, in Vector3 p1, in Vector3 p2)
     {
-        // square distance from a WowPoint to a segment
-        private static float GetSquareSegmentDistance(Vector3 p, Vector3 p1, Vector3 p2)
+        float x = p1.X;
+        float y = p1.Y;
+        float dx = p2.X - x;
+        float dy = p2.Y - y;
+
+        if (!dx.Equals(0f) || !dy.Equals(0f))
         {
-            var x = p1.X;
-            var y = p1.Y;
-            var dx = p2.X - x;
-            var dy = p2.Y - y;
+            float t = ((p.X - x) * dx + (p.Y - y) * dy) / (dx * dx + dy * dy);
 
-            if (!dx.Equals(0.0) || !dy.Equals(0.0))
+            if (t > 1)
             {
-                var t = ((p.X - x) * dx + (p.Y - y) * dy) / (dx * dx + dy * dy);
+                x = p2.X;
+                y = p2.Y;
+            }
+            else if (t > 0)
+            {
+                x += dx * t;
+                y += dy * t;
+            }
+        }
 
-                if (t > 1)
+        dx = p.X - x;
+        dy = p.Y - y;
+
+        return (dx * dx) + (dy * dy);
+    }
+
+    // basic distance-based simplification
+    private static Span<Vector3> RadialDistance(Span<Vector3> points, float sqTolerance)
+    {
+        var pooler = ArrayPool<Vector3>.Shared;
+        Vector3[] reduced = pooler.Rent(points.Length);
+        int c = 1;
+
+        Vector3 prev = points[0];
+        Vector3 curr = Vector3.Zero;
+
+        reduced[0] = prev;
+
+        for (int i = 1; i < points.Length; i++)
+        {
+            curr = points[i];
+            if (Vector3.Distance(curr, prev) > sqTolerance)
+            {
+                reduced[c++] = curr;
+                prev = curr;
+            }
+        }
+
+        if (curr != Vector3.Zero && !prev.Equals(curr))
+            reduced[c++] = curr;
+
+        pooler.Return(reduced);
+        return reduced.AsSpan(0, c);
+    }
+
+    // simplification using optimized Douglas-Peucker algorithm with recursion elimination
+    private static Span<Vector3> DouglasPeucker(Span<Vector3> points, float sqTolerance)
+    {
+        int len = points.Length;
+        Span<bool> markers = stackalloc bool[len];
+
+        int? first = 0;
+        int? last = len - 1;
+        int? index = 0;
+
+        Stack<int?> stack = new(len);
+
+        var pooler = ArrayPool<Vector3>.Shared;
+        Vector3[] reduced = pooler.Rent(len);
+        int count = 0;
+
+        markers[first.Value] = true;
+        markers[last.Value] = true;
+
+        while (last != null)
+        {
+            float maxSqDist = 0f;
+
+            for (int? i = first + 1; first.HasValue && i < last; i++)
+            {
+                float sqDist = GetSquareSegmentDistance(points[i.Value], points[first.Value], points[last.Value]);
+                if (sqDist > maxSqDist)
                 {
-                    x = p2.X;
-                    y = p2.Y;
-                }
-                else if (t > 0)
-                {
-                    x += dx * t;
-                    y += dy * t;
+                    index = i;
+                    maxSqDist = sqDist;
                 }
             }
 
-            dx = p.X - x;
-            dy = p.Y - y;
-
-            return (dx * dx) + (dy * dy);
-        }
-
-        // basic distance-based simplification
-        private static Span<Vector3> SimplifyRadialDistance(Vector3[] points, float sqTolerance)
-        {
-            Vector3[] reduced = new Vector3[points.Length];
-            int j = 0;
-
-            Vector3 prev = points[0];
-            Vector3 curr = Vector3.Zero;
-
-            for (int i = 1; i < points.Length; i++)
+            if (maxSqDist > sqTolerance)
             {
-                curr = points[i];
-                if (Vector3.Distance(curr, prev) > sqTolerance)
-                {
-                    reduced[j++] = curr;
-                    prev = curr;
-                }
+                markers[index.Value] = true;
+                stack.Push(first);
+                stack.Push(index);
+                stack.Push(index);
+                stack.Push(last);
             }
 
-            if (curr != Vector3.Zero && !prev.Equals(curr))
-                reduced[j++] = curr;
-
-            return reduced.AsSpan(0, j);
+            last = stack.Count > 0 ? stack.Pop() : null;
+            first = stack.Count > 0 ? stack.Pop() : null;
         }
 
-        // simplification using optimized Douglas-Peucker algorithm with recursion elimination
-        private static Vector3[] SimplifyDouglasPeucker(Vector3[] WowPoints, float sqTolerance)
+        for (int i = 0; i < len; i++)
         {
-            var len = WowPoints.Length;
-            var markers = new int?[len];
-            int? first = 0;
-            int? last = len - 1;
-            int? index = 0;
-            var stack = new List<int?>();
-            var newWowPoints = new List<Vector3>();
-
-            markers[first.Value] = markers[last.Value] = 1;
-
-            while (last != null)
-            {
-                var maxSqDist = 0.0d;
-
-                for (int? i = first + 1; first.HasValue && i < last; i++)
-                {
-                    var sqDist = GetSquareSegmentDistance(WowPoints[i.Value], WowPoints[first.Value], WowPoints[last.Value]);
-
-                    if (sqDist > maxSqDist)
-                    {
-                        index = i;
-                        maxSqDist = sqDist;
-                    }
-                }
-
-                if (maxSqDist > sqTolerance)
-                {
-                    markers[index.Value] = 1;
-                    stack.AddRange(new[] { first, index, index, last });
-                }
-
-
-                if (stack.Count > 0)
-                {
-                    last = stack[stack.Count - 1];
-                    stack.RemoveAt(stack.Count - 1);
-                }
-                else
-                    last = null;
-
-                if (stack.Count > 0)
-                {
-                    first = stack[stack.Count - 1];
-                    stack.RemoveAt(stack.Count - 1);
-                }
-                else
-                    first = null;
-            }
-
-            for (var i = 0; i < len; i++)
-            {
-                if (markers[i] != null)
-                    newWowPoints.Add(WowPoints[i]);
-            }
-
-            return newWowPoints.ToArray();
+            if (markers[i])
+                reduced[count++] = points[i];
         }
 
-        /// <summary>
-        /// Simplifies a list of WowPoints to a shorter list of WowPoints.
-        /// </summary>
-        /// <param name="points">WowPoints original list of WowPoints</param>
-        /// <param name="tolerance">Tolerance tolerance in the same measurement as the WowPoint coordinates</param>
-        /// <param name="highestQuality">Enable highest quality for using Douglas-Peucker, set false for Radial-Distance algorithm</param>
-        /// <returns>Simplified list of WowPoints</returns>
-        public static Vector3[] Simplify(Vector3[] points, float tolerance = 0.3f, bool highestQuality = false)
-        {
-            if (points.Length == 0)
-                return Array.Empty<Vector3>();
+        pooler.Return(reduced);
+        return reduced.AsSpan(0, count);
+    }
 
-            float sqTolerance = tolerance * tolerance;
+    /// <summary>
+    /// Simplifies a list of Vector3 to a shorter list of Vector3.
+    /// </summary>
+    /// <param name="points">Vector3 original list of Vector3</param>
+    /// <param name="tolerance">Tolerance tolerance in the same measurement as the Vector3 coordinates</param>
+    /// <param name="highestQuality">Enable highest quality for using Douglas-Peucker, set false for Radial-Distance algorithm</param>
+    /// <returns>Simplified list of Vector3</returns>
+    public static Span<Vector3> Simplify(Span<Vector3> points, float tolerance = 0.3f, bool highestQuality = false)
+    {
+        if (points.Length == 0)
+            return Array.Empty<Vector3>();
 
-            if (highestQuality)
-                return SimplifyDouglasPeucker(points, sqTolerance);
+        float sqTolerance = tolerance * tolerance;
 
-            Span<Vector3> reduced = SimplifyRadialDistance(points, sqTolerance);
-            return SimplifyDouglasPeucker(reduced.ToArray(), sqTolerance);
-        }
+        if (highestQuality)
+            return DouglasPeucker(points, sqTolerance);
 
-        /// <summary>
-        /// Simplifies a list of WowPoints to a shorter list of WowPoints.
-        /// </summary>
-        /// <param name="WowPoints">WowPoints original list of WowPoints</param>
-        /// <param name="tolerance">Tolerance tolerance in the same measurement as the WowPoint coordinates</param>
-        /// <param name="highestQuality">Enable highest quality for using Douglas-Peucker, set false for Radial-Distance algorithm</param>
-        /// <returns>Simplified list of WowPoints</returns>
-        public static Vector3[] SimplifyArray(Vector3[] WowPoints, float tolerance = 0.3f, bool highestQuality = false)
-        {
-            return Simplify(WowPoints, tolerance, highestQuality);
-        }
+        Span<Vector3> reduced = RadialDistance(points, sqTolerance);
+        return DouglasPeucker(reduced, sqTolerance);
     }
 }

@@ -1,272 +1,358 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.Data;
 using System.Linq;
 using System.Numerics;
 using System.Text;
 
 using Core.Database;
+using Core.Extensions;
 
 using SharedLib;
 
 using WowheadDB;
 
-namespace Core
+namespace Core;
+
+public readonly struct RouteInfoPoi
 {
-    public readonly struct RouteInfoPoi
+    public readonly Vector3 MapLoc;
+    public readonly string Name;
+    public readonly string Color;
+    public readonly float Radius;
+
+    public RouteInfoPoi(NPC npc, string color)
     {
-        public readonly Vector3 MapLoc;
-        public readonly string Name;
-        public readonly string Color;
-        public readonly float Radius;
+        MapLoc = npc.MapCoords[0];
+        Name = npc.name;
+        Color = color;
+        Radius = 1;
+    }
 
-        public RouteInfoPoi(NPC npc, string color)
-        {
-            MapLoc = npc.MapCoords[0];
-            Name = npc.name;
-            Color = color;
-            Radius = 1;
-        }
+    public RouteInfoPoi(Vector3 mapLoc, string name, string color, float radius)
+    {
+        MapLoc = mapLoc;
+        Name = name;
+        Color = color;
+        Radius = radius;
+    }
+}
 
-        public RouteInfoPoi(Vector3 mapLoc, string name, string color, float radius)
+public sealed class RouteInfo : IDisposable
+{
+    public IEnumerable<Vector3> RouteSrc { get; private set; }
+
+    public Vector3[] Route { get; private set; }
+
+    public Vector3[] RouteToWaypoint =>
+        pathedRoutes.Length > 0 ? pathedRoutes
+            .OrderByDescending(MostRecent)
+            .First().PathingRoute()
+        : Array.Empty<Vector3>();
+
+    private static DateTime MostRecent(IRouteProvider x) => x.LastActive;
+
+    private readonly ImmutableArray<IRouteProvider> pathedRoutes;
+    private readonly AreaDB areaDB;
+    private readonly PlayerReader playerReader;
+    private readonly WorldMapAreaDB worldmapAreaDB;
+
+    public List<RouteInfoPoi> PoiList { get; } = new();
+
+    private float min;
+    private float diff;
+
+    private float addY;
+    private float addX;
+
+    private int margin;
+    private int canvasSize;
+
+    private float pointToGrid;
+
+    private const int dSize = 2;
+
+    public RouteInfo(Vector3[] route,
+        IEnumerable<IRouteProvider> pathedRoutes,
+        PlayerReader playerReader, AreaDB areaDB,
+        WorldMapAreaDB worldmapAreaDB)
+    {
+        RouteSrc = this.Route = route;
+        this.pathedRoutes = pathedRoutes.ToImmutableArray();
+        this.playerReader = playerReader;
+        this.areaDB = areaDB;
+        this.worldmapAreaDB = worldmapAreaDB;
+
+        this.areaDB.Changed += OnZoneChanged;
+        OnZoneChanged();
+
+        CalculateDiffs();
+    }
+
+    public void Dispose()
+    {
+        areaDB.Changed -= OnZoneChanged;
+    }
+
+    public void SetRouteSource(IEnumerable<Vector3>? src = null)
+    {
+        RouteSrc = src ?? Route;
+    }
+
+    public void UpdateRoute(Vector3[] mapRoute)
+    {
+        Route = mapRoute;
+
+        foreach (var r in pathedRoutes.OfType<IEditedRouteReceiver>())
         {
-            MapLoc = mapLoc;
-            Name = name;
-            Color = color;
-            Radius = radius;
+            r.ReceivePath(Route);
         }
     }
 
-    public sealed class RouteInfo : IDisposable
+    public void SetMargin(int margin)
     {
-        public Vector3[] Route { get; private set; }
+        this.margin = margin;
+        CalculatePointToGrid();
+    }
 
-        public Vector3[] RouteToWaypoint => pathedRoutes.Any()
-                    ? pathedRoutes.OrderByDescending(x => x.LastActive).First().PathingRoute()
-                    : Array.Empty<Vector3>();
+    public void SetCanvasSize(int size)
+    {
+        this.canvasSize = size;
+        CalculatePointToGrid();
+    }
 
-        private readonly IEnumerable<IRouteProvider> pathedRoutes;
-        private readonly AreaDB areaDB;
-        private readonly PlayerReader playerReader;
-        private readonly WorldMapAreaDB worldmapAreaDB;
+    public void CalculatePointToGrid()
+    {
+        pointToGrid = ((float)canvasSize - (margin * 2)) / diff;
+        CalculateDiffs();
+    }
 
-        public List<RouteInfoPoi> PoiList { get; } = new();
+    public int ToCanvasPointX(float value)
+    {
+        return (int)(margin + ((value + addX - min) * pointToGrid));
+    }
 
-        private float min;
-        private float diff;
+    public int ToCanvasPointY(float value)
+    {
+        return (int)(margin + ((value + addY - min) * pointToGrid));
+    }
 
-        private float addY;
-        private float addX;
+    public float DistanceToGrid(int value)
+    {
+        return value / 100f * pointToGrid;
+    }
 
-        private int margin;
-        private int canvasSize;
+    private void OnZoneChanged()
+    {
+        if (areaDB.CurrentArea == null)
+            return;
 
-        private float pointToGrid;
-
-        private const int dSize = 2;
-
-        public RouteInfo(Vector3[] route, IEnumerable<IRouteProvider> pathedRoutes, PlayerReader playerReader, AreaDB areaDB, WorldMapAreaDB worldmapAreaDB)
+        PoiList.Clear();
+        /*
+        // Visualize the zone pois
+        for (int i = 0; i < areaDB.CurrentArea.vendor?.Count; i++)
         {
-            this.Route = route;
-            this.pathedRoutes = pathedRoutes;
-            this.playerReader = playerReader;
-            this.areaDB = areaDB;
-            this.worldmapAreaDB = worldmapAreaDB;
-
-            this.areaDB.Changed += OnZoneChanged;
-            OnZoneChanged();
-
-            CalculateDiffs();
+            NPC npc = areaDB.CurrentArea.vendor[i];
+            PoiList.Add(new RouteInfoPoi(npc, "green"));
         }
 
-        public void Dispose()
+        for (int i = 0; i < areaDB.CurrentArea.repair?.Count; i++)
         {
-            areaDB.Changed -= OnZoneChanged;
+            NPC npc = areaDB.CurrentArea.repair[i];
+            PoiList.Add(new RouteInfoPoi(npc, "purple"));
         }
 
-        public void UpdateRoute(Vector3[] newMapRoute)
+        for (int i = 0; i < areaDB.CurrentArea.innkeeper?.Count; i++)
         {
-            Route = newMapRoute;
+            NPC npc = areaDB.CurrentArea.innkeeper[i];
+            PoiList.Add(new RouteInfoPoi(npc, "blue"));
+        }
 
-            foreach (IEditedRouteReceiver receiver in pathedRoutes.OfType<IEditedRouteReceiver>())
+        for (int i = 0; i < areaDB.CurrentArea.flightmaster?.Count; i++)
+        {
+            NPC npc = areaDB.CurrentArea.flightmaster[i];
+            PoiList.Add(new RouteInfoPoi(npc, "orange"));
+        }
+        */
+    }
+
+    private void CalculateDiffs()
+    {
+        int routeLength = RouteSrc.Count();
+        int navLength = RouteToWaypoint.Length;
+        int poiCount = PoiList.Count;
+
+        int length = routeLength + navLength + poiCount + 1;
+        Span<Vector3> total = stackalloc Vector3[length];
+
+        RouteToWaypoint.AsSpan().CopyTo(total);
+        worldmapAreaDB.ToMap_FlipXY(playerReader.UIMapId.Value, total[..navLength]);
+
+        for (int i = 0; i < poiCount; i++)
+        {
+            total[navLength + i] = PoiList[i].MapLoc;
+        }
+
+        int idx = 0;
+        foreach (Vector3 p in RouteSrc)
+        {
+            total[navLength + poiCount + idx++] = p;
+        }
+
+        total[^1] = playerReader.MapPos;
+
+        static float X(Vector3 s) => s.X;
+        float maxX = Max(total, X);
+        float minX = Min(total, X);
+        float diffX = maxX - minX;
+
+        static float Y(Vector3 s) => s.Y;
+        float maxY = Max(total, Y);
+        float minY = Min(total, Y);
+        float diffY = maxY - minY;
+
+        this.addY = 0;
+        this.addX = 0;
+
+        if (diffX > diffY)
+        {
+            this.addY = minX - minY;
+            this.min = minX;
+            this.diff = diffX;
+        }
+        else
+        {
+            this.addX = minY - minX;
+            this.min = minY;
+            this.diff = diffY;
+        }
+
+        static float Max(ReadOnlySpan<Vector3> span, Func<Vector3, float> selector)
+        {
+            float max = float.MinValue;
+
+            for (int i = 0; i < span.Length; i++)
             {
-                receiver.ReceivePath(Route);
+                float v = selector(span[i]);
+                if (v > max)
+                    max = v;
             }
+
+            return max;
         }
 
-        public void SetMargin(int margin)
+        static float Min(ReadOnlySpan<Vector3> span, Func<Vector3, float> selector)
         {
-            this.margin = margin;
-            CalculatePointToGrid();
-        }
+            float max = float.MaxValue;
 
-        public void SetCanvasSize(int size)
-        {
-            this.canvasSize = size;
-            CalculatePointToGrid();
-        }
-
-        public void CalculatePointToGrid()
-        {
-            pointToGrid = ((float)canvasSize - (margin * 2)) / diff;
-            CalculateDiffs();
-        }
-
-        public int ToCanvasPointX(float value)
-        {
-            return (int)(margin + ((value + addX - min) * pointToGrid));
-        }
-
-        public int ToCanvasPointY(float value)
-        {
-            return (int)(margin + ((value + addY - min) * pointToGrid));
-        }
-
-        public float DistanceToGrid(int value)
-        {
-            return value / 100f * pointToGrid;
-        }
-
-        private void OnZoneChanged()
-        {
-            if (areaDB.CurrentArea == null)
-                return;
-
-            PoiList.Clear();
-            /*
-            // Visualize the zone pois
-            for (int i = 0; i < areaDB.CurrentArea.vendor?.Count; i++)
+            for (int i = 0; i < span.Length; i++)
             {
-                NPC npc = areaDB.CurrentArea.vendor[i];
-                PoiList.Add(new RouteInfoPoi(npc, "green"));
+                float v = selector(span[i]);
+                if (v < max)
+                    max = v;
             }
 
-            for (int i = 0; i < areaDB.CurrentArea.repair?.Count; i++)
-            {
-                NPC npc = areaDB.CurrentArea.repair[i];
-                PoiList.Add(new RouteInfoPoi(npc, "purple"));
-            }
-
-            for (int i = 0; i < areaDB.CurrentArea.innkeeper?.Count; i++)
-            {
-                NPC npc = areaDB.CurrentArea.innkeeper[i];
-                PoiList.Add(new RouteInfoPoi(npc, "blue"));
-            }
-
-            for (int i = 0; i < areaDB.CurrentArea.flightmaster?.Count; i++)
-            {
-                NPC npc = areaDB.CurrentArea.flightmaster[i];
-                PoiList.Add(new RouteInfoPoi(npc, "orange"));
-            }
-            */
+            return max;
         }
+    }
 
-        private void CalculateDiffs()
+
+    public string RenderPathLines(ReadOnlySpan<Vector3> path)
+    {
+        if (path.Length <= 1)
+            return string.Empty;
+
+        StringBuilder sb = new();
+        for (int i = 1; i < path.Length; i++)
         {
-            /*
-            TODO> route disappears after time?
-            Vector3[] pois = PoiList.Select(p => p.MapLoc).ToArray();
-            Vector3[] route = Route.ToArray();
-            Vector3[] navigation = RouteToWaypoint.ToArray();
-            worldmapAreaDB.ToMap_FlipXY(playerReader.UIMapId.Value, ref navigation);
+            Vector3 p1 = path[i];
+            Vector3 p2 = path[i - 1];
 
-            Vector3[] allPoints = new Vector3[route.Length + navigation.Length + pois.Length];
-            Array.Copy(Route, allPoints, route.Length);
-            Array.ConstrainedCopy(navigation, 0, allPoints, route.Length, navigation.Length);
-            Array.ConstrainedCopy(pois, 0, allPoints, route.Length + navigation.Length, pois.Length);
-            allPoints[^1] = playerReader.MapPos;
-            */
-
-            var allPoints = Route.ToList();
-
-            Vector3[] navigation = RouteToWaypoint.ToArray();
-            worldmapAreaDB.ToMap_FlipXY(playerReader.UIMapId.Value, ref navigation);
-            allPoints.AddRange(navigation);
-
-            var pois = PoiList.Select(p => p.MapLoc);
-            allPoints.AddRange(pois);
-
-            allPoints.Add(playerReader.MapPos);
-
-            float maxX = allPoints.Max(s => s.X);
-            float minX = allPoints.Min(s => s.X);
-            float diffX = maxX - minX;
-
-            float maxY = allPoints.Max(s => s.Y);
-            float minY = allPoints.Min(s => s.Y);
-            float diffY = maxY - minY;
-
-            this.addY = 0;
-            this.addX = 0;
-
-            if (diffX > diffY)
-            {
-                this.addY = minX - minY;
-                this.min = minX;
-                this.diff = diffX;
-            }
-            else
-            {
-                this.addX = minY - minX;
-                this.min = minY;
-                this.diff = diffY;
-            }
+            sb.AppendLine(
+                $"<line " +
+                $"x1='{ToCanvasPointX(p1.X)}' " +
+                $"y1='{ToCanvasPointY(p1.Y)}' " +
+                $"x2='{ToCanvasPointX(p2.X)}' " +
+                $"y2='{ToCanvasPointY(p2.Y)}' />");
         }
+        return sb.ToString();
+    }
 
-        public string RenderPathLines(Vector3[] path)
+    private const string FIRST = "<br><b>First</b>";
+    private const string LAST = "<br><b>Last</b>";
+
+    public string RenderPathPoints(ReadOnlySpan<Vector3> path)
+    {
+        StringBuilder sb = new();
+        int last = path.Length - 1;
+        for (int i = 0; i < path.Length; i++)
         {
-            StringBuilder sb = new();
-            for (int i = 0; i < path.Length - 1; i++)
-            {
-                Vector3 p1 = path[i];
-                Vector3 p2 = path[i + 1];
-                sb.AppendLine($"<line x1 = '{ToCanvasPointX(p1.X)}' y1 = '{ToCanvasPointY(p1.Y)}' x2 = '{ToCanvasPointX(p2.X)}' y2 = '{ToCanvasPointY(p2.Y)}' />");
-            }
-            return sb.ToString();
+            Vector3 p = path[i];
+            float x = p.X;
+            float y = p.Y;
+            sb.AppendLine(
+                $"<circle onmousedown=\"pointClick(evt,{x},{y},{i});\" " +
+                $"onmousemove=\"showTooltip(evt,'{x},{y}{(
+                    i == 0
+                    ? FIRST
+                    : i == last
+                    ? LAST
+                    : string.Empty)}');\" " +
+                $"onmouseout=\"hideTooltip();\" " +
+                $"cx='{ToCanvasPointX(x)}' " +
+                $"cy='{ToCanvasPointY(y)}' r='{dSize}' />");
         }
+        return sb.ToString();
+    }
 
-        private const string first = "<br><b>First</b>";
-        private const string last = "<br><b>Last</b>";
+    public Vector3 NextPoint()
+    {
+        var route = pathedRoutes
+            .OrderByDescending(MostRecent)
+            .FirstOrDefault();
 
-        public string RenderPathPoints(Vector3[] path)
-        {
-            StringBuilder sb = new();
-            for (int i = 0; i < path.Length; i++)
-            {
-                Vector3 p = path[i];
-                float x = p.X;
-                float y = p.Y;
-                sb.AppendLine($"<circle onmousedown=\"pointClick(evt,{x},{y},{i});\"  onmousemove=\"showTooltip(evt,'{x},{y}{(i == 0 ? first : i == path.Length - 1 ? last : string.Empty)}');\" onmouseout=\"hideTooltip();\"  cx = '{ToCanvasPointX(p.X)}' cy = '{ToCanvasPointY(p.Y)}' r = '{dSize}' />");
-            }
-            return sb.ToString();
-        }
+        if (route == null || !route.HasNext())
+            return Vector3.Zero;
 
-        public Vector3 NextPoint()
-        {
-            var route = pathedRoutes.OrderByDescending(s => s.LastActive).FirstOrDefault();
-            if (route == null || !route.HasNext())
-                return Vector3.Zero;
+        return route.NextMapPoint();
+    }
 
-            return route.NextMapPoint();
-        }
+    public string RenderNextPoint()
+    {
+        Vector3 pt = NextPoint();
+        if (pt == Vector3.Zero)
+            return string.Empty;
 
-        public string RenderNextPoint()
-        {
-            Vector3 pt = NextPoint();
-            if (pt == Vector3.Zero)
-                return string.Empty;
+        return $"<circle " +
+            $"cx='{ToCanvasPointX(pt.X)}' " +
+            $"cy='{ToCanvasPointY(pt.Y)}'" +
+            $"r='{dSize + 1}' />";
+    }
 
-            return $"<circle cx = '{ToCanvasPointX(pt.X)}' cy = '{ToCanvasPointY(pt.Y)}'r = '{dSize + 1}' />";
-        }
+    public string DeathImage(Vector3 pt)
+    {
+        var size = this.canvasSize / 25;
+        return pt == Vector3.Zero
+            ? string.Empty
+            : $"<image href='_content/Frontend/img/death.svg' " +
+            $"x='{ToCanvasPointX(pt.X) - size / 2}' " +
+            $"y='{ToCanvasPointY(pt.Y) - size / 2}' " +
+            $"height='{size}' " +
+            $"width='{size}' />";
+    }
 
-        public string DeathImage(Vector3 pt)
-        {
-            var size = this.canvasSize / 25;
-            return pt == Vector3.Zero ? string.Empty : $"<image href = '_content/Frontend/death.svg' x = '{ToCanvasPointX(pt.X) - size / 2}' y = '{ToCanvasPointY(pt.Y) - size / 2}' height='{size}' width='{size}' />";
-        }
-
-        public string DrawPoi(RouteInfoPoi poi)
-        {
-            return $"<circle onmousemove=\"showTooltip(evt, '{poi.Name}<br/>{poi.MapLoc.X},{poi.MapLoc.Y}');\" onmouseout=\"hideTooltip();\" cx='{ToCanvasPointX(poi.MapLoc.X)}' cy='{ToCanvasPointY(poi.MapLoc.Y)}' r='{(poi.Radius == 1 ? dSize : DistanceToGrid((int)poi.Radius))}' " + (poi.Radius == 1 ? $"fill='{poi.Color}'" : $"stroke='{poi.Color}' stroke-width='1' fill='none'") + " />";
-        }
+    public string DrawPoi(RouteInfoPoi poi)
+    {
+        return $"<circle " +
+            $"onmousemove=\"showTooltip(evt, '{poi.Name}<br/>{poi.MapLoc.X},{poi.MapLoc.Y}');\" " +
+            $"onmouseout=\"hideTooltip();\" " +
+            $"cx='{ToCanvasPointX(poi.MapLoc.X)}' " +
+            $"cy='{ToCanvasPointY(poi.MapLoc.Y)}' " +
+            $"r='{(poi.Radius == 1 ? dSize : DistanceToGrid((int)poi.Radius))}' " + (
+            poi.Radius == 1
+            ? $"fill='{poi.Color}'"
+            : $"stroke='{poi.Color}' " +
+            $"stroke-width='1' fill='none'") + " />";
     }
 }

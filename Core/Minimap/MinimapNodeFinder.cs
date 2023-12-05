@@ -1,141 +1,103 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Drawing;
-using System.Drawing.Imaging;
-using System.Linq;
-using System.Runtime.CompilerServices;
-using System.Threading.Tasks;
-using Game;
+using System.Buffers;
+
+using Core.Minimap;
+
 using Microsoft.Extensions.Logging;
-using SharedLib.Extensions;
 
-namespace Core
+using SharedLib;
+
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Advanced;
+
+namespace Core;
+
+public sealed class MinimapNodeFinder
 {
-    public sealed class MinimapNodeFinder
+    private readonly ILogger logger;
+    private readonly IMinimapImageProvider provider;
+    public event EventHandler<MinimapNodeEventArgs>? NodeEvent;
+
+    private readonly ArrayCounter counter;
+
+    private const int minScore = 2;
+
+    public MinimapNodeFinder(ILogger logger, IMinimapImageProvider provider)
     {
-        private struct Score
+        this.logger = logger;
+        this.provider = provider;
+
+        counter = new();
+    }
+
+    public void Update()
+    {
+        ReadOnlySpan<Point> span = FindYellowPoints();
+        ScorePoints(span, out Point best, out int amountAboveMin);
+        NodeEvent?.Invoke(this, new MinimapNodeEventArgs(best.X, best.Y, amountAboveMin));
+    }
+
+    private ReadOnlySpan<Point> FindYellowPoints()
+    {
+        var pooler = ArrayPool<Point>.Shared;
+        Point[] points = pooler.Rent(MinimapRowOperation.SIZE);
+
+        counter.count = 0;
+
+        MinimapRowOperation operation = new(
+            provider.MiniMapImage.Frames[0].PixelBuffer,
+            provider.MiniMapRect, counter, points);
+
+        ParallelRowIterator.IterateRows<MinimapRowOperation, Point>(
+            Configuration.Default,
+            operation.rect,
+            in operation);
+
+        pooler.Return(points);
+
+        return points.AsSpan(0, counter.count);
+    }
+
+    private static void ScorePoints(ReadOnlySpan<Point> points, out Point best, out int amountAboveMin)
+    {
+        const int size = 5;
+
+        best = new Point();
+        amountAboveMin = 0;
+
+        int maxIndex = -1;
+        int maxScore = 0;
+
+        for (int i = 0; i < points.Length; i++)
         {
-            public int X;
-            public int Y;
-            public int count;
-        }
+            Point pi = points[i];
 
-        private readonly ILogger logger;
-        private readonly WowScreen wowScreen;
-        public event EventHandler<MinimapNodeEventArgs>? NodeEvent;
-
-        private const int MinScore = 2;
-        private const int MaxBlue = 34;
-        private const int MinRedGreen = 176;
-
-        public MinimapNodeFinder(ILogger logger, WowScreen wowScreen)
-        {
-            this.logger = logger;
-            this.wowScreen = wowScreen;
-        }
-
-        public void TryFind()
-        {
-            wowScreen.UpdateMinimapBitmap();
-
-            var list = FindYellowPoints();
-            ScorePoints(list, out Score best);
-            NodeEvent?.Invoke(this, new MinimapNodeEventArgs(best.X, best.Y, list.Count(x => x.count > MinScore)));
-        }
-
-        private List<Score> FindYellowPoints()
-        {
-            List<Score> points = new(100);
-            Bitmap bitmap = wowScreen.MiniMapBitmap;
-
-            // TODO: adjust these values based on resolution
-            // The reference resolution is 1920x1080
-            const int minX = 6;
-            const int maxX = 170;
-            const int minY = 36;
-            int maxY = bitmap.Height - 6;
-
-            Rectangle rect = new(minX, minY, maxX - minX, maxY - minY);
-            Point center = rect.Centre();
-            float radius = (maxX - minX) / 2f;
-
-            unsafe
+            int score = 0;
+            for (int j = 0; j < points.Length; j++)
             {
-                BitmapData data = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadWrite, bitmap.PixelFormat);
-                int bytesPerPixel = Bitmap.GetPixelFormatSize(bitmap.PixelFormat) / 8;
+                Point pj = points[j];
 
-                //for (int y = minY; y < maxY; y++)
-                Parallel.For(minY, maxY, y =>
+                if (i != j &&
+                    (Math.Abs(pi.X - pj.X) < size ||
+                    Math.Abs(pi.Y - pj.Y) < size))
                 {
-                    byte* currentLine = (byte*)data.Scan0 + (y * data.Stride);
-                    for (int x = minX; x < maxX; x++)
-                    {
-                        if (!IsValidSquareLocation(x, y, center, radius))
-                            continue;
-
-                        int xi = x * bytesPerPixel;
-                        if (IsMatch(currentLine[xi + 2], currentLine[xi + 1], currentLine[xi]))
-                        {
-                            if (points.Capacity == points.Count)
-                                return;
-
-                            points.Add(new Score { X = x, Y = y, count = 0 });
-                            currentLine[xi + 2] = 255;
-                            currentLine[xi + 1] = 0;
-                            currentLine[xi + 0] = 0;
-                        }
-                    }
-                });
-
-                bitmap.UnlockBits(data);
+                    score++;
+                }
             }
 
-            if (points.Count == points.Capacity)
+            if (score > minScore)
+                amountAboveMin++;
+
+            if (maxScore < score)
             {
-                logger.LogWarning("Too much yellow in this image!");
-                points.Clear();
+                maxIndex = i;
+                maxScore = score;
             }
-
-            return points;
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static bool IsMatch(byte red, byte green, byte blue)
+        if (maxIndex >= 0 && maxScore > minScore)
         {
-            return blue < MaxBlue && red > MinRedGreen && green > MinRedGreen;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static bool IsValidSquareLocation(int x, int y, Point center, float width)
-        {
-            return Math.Sqrt(((x - center.X) * (x - center.X)) + ((y - center.Y) * (y - center.Y))) < width;
-        }
-
-        private static bool ScorePoints(List<Score> points, out Score best)
-        {
-            best = new Score();
-            const int size = 5;
-
-            for (int i = 0; i < points.Count; i++)
-            {
-                Score p = points[i];
-                p.count =
-                    points.Where(s => Math.Abs(s.X - p.X) < size) // + or - n pixels horizontally
-                    .Count(s => Math.Abs(s.Y - p.Y) < size);
-
-                points[i] = p;
-            }
-
-            points.Sort((a, b) => a.count.CompareTo(b.count));
-
-            if (points.Count > 0 && points[^1].count > MinScore)
-            {
-                best = points[^1];
-                return true;
-            }
-
-            return false;
+            best = points[maxIndex];
         }
     }
 }

@@ -1,115 +1,122 @@
 ﻿using System;
-using System.Drawing;
+using SixLabors.ImageSharp;
 using System.Threading;
 using GregsStack.InputSimulatorStandard.Native;
 using static WinAPI.NativeMethods;
 using TextCopy;
 
-namespace Game
+namespace Game;
+
+public sealed class InputSimulator : IInput
 {
-    public sealed class InputSimulator : IInput
+    private readonly int maxDelay;
+
+    private readonly GregsStack.InputSimulatorStandard.InputSimulator simulator;
+    private readonly WowProcess process;
+
+    private readonly CancellationToken token;
+
+    public InputSimulator(WowProcess process, CancellationTokenSource cts, int maxDelay)
     {
-        private readonly int MIN_DELAY;
-        private readonly int MAX_DELAY;
+        this.process = process;
+        this.token = cts.Token;
 
-        private readonly GregsStack.InputSimulatorStandard.InputSimulator simulator;
-        private readonly WowProcess wowProcess;
+        this.maxDelay = maxDelay;
 
-        private readonly CancellationToken _ct;
+        simulator = new();
+    }
 
-        public InputSimulator(WowProcess wowProcess, CancellationTokenSource cts, int minDelay, int maxDelay)
-        {
-            this.wowProcess = wowProcess;
-            _ct = cts.Token;
+    private int DelayTime(int milliseconds)
+    {
+        return milliseconds + Random.Shared.Next(maxDelay);
+    }
 
-            MIN_DELAY = minDelay;
-            MAX_DELAY = maxDelay;
+    public void KeyDown(int key)
+    {
+        if (GetForegroundWindow() != process.MainWindowHandle)
+            SetForegroundWindow(process.MainWindowHandle);
 
-            simulator = new GregsStack.InputSimulatorStandard.InputSimulator();
-        }
+        simulator.Keyboard.KeyDown((VirtualKeyCode)key);
+    }
 
-        private int Delay(int milliseconds)
-        {
-            int delay = milliseconds + Random.Shared.Next(1, MAX_DELAY);
-            _ct.WaitHandle.WaitOne(delay);
-            return delay;
-        }
+    public void KeyUp(int key)
+    {
+        if (GetForegroundWindow() != process.MainWindowHandle)
+            SetForegroundWindow(process.MainWindowHandle);
 
-        public void KeyDown(int key)
-        {
-            if (GetForegroundWindow() != wowProcess.Process.MainWindowHandle)
-                SetForegroundWindow(wowProcess.Process.MainWindowHandle);
+        simulator.Keyboard.KeyUp((VirtualKeyCode)key);
+    }
 
-            simulator.Keyboard.KeyDown((VirtualKeyCode)key);
-        }
+    public int PressRandom(int key, int milliseconds)
+    {
+        return PressRandom(key, milliseconds, token);
+    }
 
-        public void KeyUp(int key)
-        {
-            if (GetForegroundWindow() != wowProcess.Process.MainWindowHandle)
-                SetForegroundWindow(wowProcess.Process.MainWindowHandle);
+    public int PressRandom(int key, int milliseconds, CancellationToken token)
+    {
+        simulator.Keyboard.KeyDown((VirtualKeyCode)key);
 
-            simulator.Keyboard.KeyUp((VirtualKeyCode)key);
-        }
+        int delay = DelayTime(milliseconds);
+        token.WaitHandle.WaitOne(delay);
 
-        public int KeyPress(int key, int milliseconds)
-        {
-            simulator.Keyboard.KeyDown((VirtualKeyCode)key);
-            int delay = Delay(milliseconds);
-            simulator.Keyboard.KeyUp((VirtualKeyCode)key);
-            return delay;
-        }
+        simulator.Keyboard.KeyUp((VirtualKeyCode)key);
 
-        public void KeyPressSleep(int key, int milliseconds, CancellationToken ct)
-        {
-            simulator.Keyboard.KeyDown((VirtualKeyCode)key);
-            ct.WaitHandle.WaitOne(milliseconds);
-            simulator.Keyboard.KeyUp((VirtualKeyCode)key);
-        }
+        return delay;
+    }
 
-        public void LeftClickMouse(Point p)
-        {
-            SetCursorPosition(p);
-            simulator.Mouse.LeftButtonDown();
-            Delay(MIN_DELAY);
-            simulator.Mouse.LeftButtonUp();
-        }
+    public void PressFixed(int key, int milliseconds, CancellationToken token)
+    {
+        simulator.Keyboard.KeyDown((VirtualKeyCode)key);
+        token.WaitHandle.WaitOne(milliseconds);
+        simulator.Keyboard.KeyUp((VirtualKeyCode)key);
+    }
 
-        public void RightClickMouse(Point p)
-        {
-            SetCursorPosition(p);
-            simulator.Mouse.RightButtonDown();
-            Delay(MIN_DELAY);
-            simulator.Mouse.RightButtonUp();
-        }
+    public void LeftClick(Point p)
+    {
+        SetCursorPos(p);
 
-        public void SetCursorPosition(Point p)
-        {
-            GetWindowRect(wowProcess.Process.MainWindowHandle, out Rectangle rect);
-            p.X = p.X * 65535 / rect.Width;
-            p.Y = p.Y * 65535 / rect.Height;
-            simulator.Mouse.MoveMouseTo(Convert.ToDouble(p.X), Convert.ToDouble(p.Y));
-        }
+        simulator.Mouse.LeftButtonDown();
+        token.WaitHandle.WaitOne(DelayTime(maxDelay));
+        simulator.Mouse.LeftButtonUp();
+    }
 
-        public void SendText(string text)
-        {
-            if (GetForegroundWindow() != wowProcess.Process.MainWindowHandle)
-                SetForegroundWindow(wowProcess.Process.MainWindowHandle);
+    public void RightClick(Point p)
+    {
+        SetCursorPos(p);
 
-            simulator.Keyboard.TextEntry(text);
-            Delay(25);
-        }
+        simulator.Mouse.RightButtonDown();
+        token.WaitHandle.WaitOne(DelayTime(maxDelay));
+        simulator.Mouse.RightButtonUp();
+    }
 
-        public void SetClipboard(string text)
-        {
-            ClipboardService.SetText(text);
-        }
+    public void SetCursorPos(Point p)
+    {
+        GetWindowRect(process.MainWindowHandle, out Rectangle rect);
+        p.X = p.X * 65535 / rect.Width;
+        p.Y = p.Y * 65535 / rect.Height;
+        simulator.Mouse.MoveMouseTo(Convert.ToDouble(p.X), Convert.ToDouble(p.Y));
+    }
 
-        public void PasteFromClipboard()
-        {
-            if (GetForegroundWindow() != wowProcess.Process.MainWindowHandle)
-                SetForegroundWindow(wowProcess.Process.MainWindowHandle);
+    public void SendText(string text)
+    {
+        if (GetForegroundWindow() != process.MainWindowHandle)
+            SetForegroundWindow(process.MainWindowHandle);
 
-            simulator.Keyboard.ModifiedKeyStroke(VirtualKeyCode.LCONTROL, VirtualKeyCode.VK_V);
-        }
+        simulator.Keyboard.TextEntry(text);
+
+        token.WaitHandle.WaitOne(DelayTime(maxDelay));
+    }
+
+    public void SetClipboard(string text)
+    {
+        ClipboardService.SetText(text);
+    }
+
+    public void PasteFromClipboard()
+    {
+        if (GetForegroundWindow() != process.MainWindowHandle)
+            SetForegroundWindow(process.MainWindowHandle);
+
+        simulator.Keyboard.ModifiedKeyStroke(VirtualKeyCode.LCONTROL, VirtualKeyCode.VK_V);
     }
 }

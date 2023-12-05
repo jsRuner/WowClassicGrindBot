@@ -1,118 +1,120 @@
 ﻿using System;
-using System.Drawing;
+using SixLabors.ImageSharp;
 using System.Threading;
 using TextCopy;
 using static WinAPI.NativeMethods;
 
-namespace Game
+namespace Game;
+
+public sealed class InputWindowsNative : IInput
 {
-    public sealed class InputWindowsNative : IInput
+    private readonly int maxDelay;
+
+    private readonly WowProcess process;
+    private readonly CancellationToken token;
+
+    public InputWindowsNative(WowProcess process, CancellationTokenSource cts, int maxDelay)
     {
-        private readonly int MIN_DELAY;
-        private readonly int MAX_DELAY;
+        this.process = process;
+        token = cts.Token;
 
-        private readonly WowProcess wowProcess;
+        this.maxDelay = maxDelay;
+    }
 
-        private readonly CancellationToken _ct;
+    private int DelayTime(int milliseconds)
+    {
+        return milliseconds + Random.Shared.Next(maxDelay);
+    }
 
-        public InputWindowsNative(WowProcess wowProcess, CancellationTokenSource cts, int minDelay, int maxDelay)
-        {
-            this.wowProcess = wowProcess;
-            _ct = cts.Token;
+    public void KeyDown(int key)
+    {
+        PostMessage(process.MainWindowHandle, WM_KEYDOWN, key, 0);
+    }
 
-            MIN_DELAY = minDelay;
-            MAX_DELAY = maxDelay;
-        }
+    public void KeyUp(int key)
+    {
+        PostMessage(process.MainWindowHandle, WM_KEYUP, key, 0);
+    }
 
-        private int Delay(int milliseconds)
-        {
-            int delay = milliseconds + Random.Shared.Next(1, MAX_DELAY);
-            _ct.WaitHandle.WaitOne(delay);
-            return delay;
-        }
+    public int PressRandom(int key, int milliseconds)
+    {
+        return PressRandom(key, milliseconds, token);
+    }
 
-        public void KeyDown(int key)
-        {
-            PostMessage(wowProcess.Process.MainWindowHandle, WM_KEYDOWN, key, 0);
-        }
+    public int PressRandom(int key, int milliseconds, CancellationToken token)
+    {
+        PostMessage(process.MainWindowHandle, WM_KEYDOWN, key, 0);
 
-        public void KeyUp(int key)
-        {
-            PostMessage(wowProcess.Process.MainWindowHandle, WM_KEYUP, key, 0);
-        }
+        int delay = DelayTime(milliseconds);
+        token.WaitHandle.WaitOne(delay);
 
-        public int KeyPress(int key, int milliseconds)
-        {
-            PostMessage(wowProcess.Process.MainWindowHandle, WM_KEYDOWN, key, 0);
-            int delay = Delay(milliseconds);
-            PostMessage(wowProcess.Process.MainWindowHandle, WM_KEYUP, key, 0);
+        PostMessage(process.MainWindowHandle, WM_KEYUP, key, 0);
 
-            return delay;
-        }
+        return delay;
+    }
 
-        public void KeyPressSleep(int key, int milliseconds, CancellationToken ct)
-        {
-            PostMessage(wowProcess.Process.MainWindowHandle, WM_KEYDOWN, key, 0);
-            ct.WaitHandle.WaitOne(milliseconds);
-            PostMessage(wowProcess.Process.MainWindowHandle, WM_KEYUP, key, 0);
-        }
+    public void PressFixed(int key, int milliseconds, CancellationToken token)
+    {
+        PostMessage(process.MainWindowHandle, WM_KEYDOWN, key, 0);
+        token.WaitHandle.WaitOne(milliseconds);
+        PostMessage(process.MainWindowHandle, WM_KEYUP, key, 0);
+    }
 
-        public void LeftClickMouse(Point p)
-        {
-            SetCursorPosition(p);
+    public void LeftClick(Point p)
+    {
+        SetCursorPos(p);
 
-            ScreenToClient(wowProcess.Process.MainWindowHandle, ref p);
-            int lparam = MakeLParam(p.X, p.Y);
+        ScreenToClient(process.MainWindowHandle, ref p);
+        int lparam = MakeLParam(p.X, p.Y);
 
-            PostMessage(wowProcess.Process.MainWindowHandle, WM_LBUTTONDOWN, 0, lparam);
+        PostMessage(process.MainWindowHandle, WM_LBUTTONDOWN, 0, lparam);
 
-            Delay(MIN_DELAY);
+        token.WaitHandle.WaitOne(DelayTime(maxDelay));
 
-            GetCursorPos(out p);
-            ScreenToClient(wowProcess.Process.MainWindowHandle, ref p);
-            lparam = MakeLParam(p.X, p.Y);
+        GetCursorPos(out p);
+        ScreenToClient(process.MainWindowHandle, ref p);
+        lparam = MakeLParam(p.X, p.Y);
 
-            PostMessage(wowProcess.Process.MainWindowHandle, WM_LBUTTONUP, 0, lparam);
-        }
+        PostMessage(process.MainWindowHandle, WM_LBUTTONUP, 0, lparam);
+    }
 
-        public void RightClickMouse(Point p)
-        {
-            SetCursorPosition(p);
+    public void RightClick(Point p)
+    {
+        SetCursorPos(p);
 
-            ScreenToClient(wowProcess.Process.MainWindowHandle, ref p);
-            int lparam = MakeLParam(p.X, p.Y);
+        ScreenToClient(process.MainWindowHandle, ref p);
+        int lparam = MakeLParam(p.X, p.Y);
 
-            PostMessage(wowProcess.Process.MainWindowHandle, WM_RBUTTONDOWN, 0, lparam);
+        PostMessage(process.MainWindowHandle, WM_RBUTTONDOWN, 0, lparam);
 
-            Delay(MIN_DELAY);
+        token.WaitHandle.WaitOne(DelayTime(maxDelay));
 
-            GetCursorPos(out p);
-            ScreenToClient(wowProcess.Process.MainWindowHandle, ref p);
-            lparam = MakeLParam(p.X, p.Y);
+        GetCursorPos(out p);
+        ScreenToClient(process.MainWindowHandle, ref p);
+        lparam = MakeLParam(p.X, p.Y);
 
-            PostMessage(wowProcess.Process.MainWindowHandle, WM_RBUTTONUP, 0, lparam);
-        }
+        PostMessage(process.MainWindowHandle, WM_RBUTTONUP, 0, lparam);
+    }
 
-        public void SetCursorPosition(Point p)
-        {
-            SetCursorPos(p.X, p.Y);
-        }
+    public void SetCursorPos(Point p)
+    {
+        WinAPI.NativeMethods.SetCursorPos(p.X, p.Y);
+    }
 
-        public void SendText(string text)
-        {
-            // currently not supported
-            throw new NotImplementedException();
-        }
+    public void SendText(string text)
+    {
+        // currently not supported
+        throw new NotImplementedException();
+    }
 
-        public void SetClipboard(string text)
-        {
-            ClipboardService.SetText(text);
-        }
+    public void SetClipboard(string text)
+    {
+        ClipboardService.SetText(text);
+    }
 
-        public void PasteFromClipboard()
-        {
-            // currently not supported
-            throw new NotImplementedException();
-        }
+    public void PasteFromClipboard()
+    {
+        // currently not supported
+        throw new NotImplementedException();
     }
 }

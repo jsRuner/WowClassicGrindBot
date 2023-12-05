@@ -1,99 +1,86 @@
 ﻿using System;
 
-namespace Core
+using static Core.ActionBar;
+
+using Microsoft.Extensions.Logging;
+using System.Runtime.CompilerServices;
+
+namespace Core;
+
+#pragma warning disable CS0162
+
+public readonly record struct ActionBarCost(PowerType PowerType, int Cost);
+
+public sealed class ActionBarCostReader : IReader
 {
-    public sealed class ActionBarCostEventArgs : EventArgs
-    {
-        public int Slot { get; }
-        public ActionBarCost ActionBarCost { get; }
+#if DEBUG
+    private const bool DEBUG = true;
+#else
+    private const bool DEBUG = false;
+#endif
 
-        public ActionBarCostEventArgs(int slot, ActionBarCost abc)
+    private const int COST_ORDER = 10000;
+    private const int POWER_TYPE_MOD = 100;
+
+    private const int cActionbarMeta = 35;
+    private const int cActionbarNum = 36;
+
+    private static readonly ActionBarCost defaultCost = new(PowerType.Mana, 0);
+    public static ref readonly ActionBarCost DefaultCost => ref defaultCost;
+
+    public ActionBarCost[] Data { get; init; }
+
+    public int Count { get; private set; }
+
+    private readonly ILogger<ActionBarCostReader> logger;
+
+    public ActionBarCostReader(ILogger<ActionBarCostReader> logger)
+    {
+        this.logger = logger;
+
+        Data = new ActionBarCost[CELL_COUNT * BIT_PER_CELL * NUM_OF_COST];
+
+        Reset();
+    }
+
+    public void Update(IAddonDataProvider reader)
+    {
+        int meta = reader.GetInt(cActionbarMeta);
+        int cost = reader.GetInt(cActionbarNum);
+        if ((cost == 0 && meta == 0) || meta < ACTION_SLOT_MUL)
+            return;
+
+        int slotIdx = (meta / ACTION_SLOT_MUL) - 1;
+        int costIdx = (meta / COST_ORDER % 10) - 1;
+        int type = meta % POWER_TYPE_MOD;
+
+        int index = (slotIdx * NUM_OF_COST) + costIdx;
+
+        ActionBarCost old = Data[index];
+        Data[index] = new((PowerType)type, cost);
+
+        if (!old.Equals(Data[index]))
         {
-            Slot = slot;
-            ActionBarCost = abc;
+            if (DEBUG)
+                logger.LogInformation($"[{index,3}][{slotIdx + 1,3}][{costIdx}] {cost} {((PowerType)type).ToStringF()}");
+
+            Count++;
         }
     }
 
-    public readonly struct ActionBarCost
+    public void Reset()
     {
-        public readonly PowerType PowerType;
-        public readonly int Cost;
+        Count = 0;
 
-        public ActionBarCost(PowerType powerType, int cost)
-        {
-            PowerType = powerType;
-            Cost = cost;
-        }
+        var span = Data.AsSpan();
+        span.Fill(DefaultCost);
     }
 
-    public class ActionBarCostReader
+    [SkipLocalsInit]
+    public ActionBarCost Get(KeyAction keyAction, int costIndex = 0)
     {
-        private const int COST_ORDER = 10000;
-        private const int POWER_TYPE_MOD = 100;
-
-        private readonly int cActionbarMeta;
-        private readonly int cActionbarNum;
-
-        private static readonly ActionBarCost defaultCost = new(PowerType.Mana, 0);
-        private readonly ActionBarCost[][] data;
-
-        public int Count { get; private set; }
-
-        public event EventHandler<ActionBarCostEventArgs>? OnActionCostChanged;
-        public event Action? OnActionCostReset;
-
-        public ActionBarCostReader(int cActionbarMeta, int cActionbarNum)
-        {
-            this.cActionbarMeta = cActionbarMeta;
-            this.cActionbarNum = cActionbarNum;
-
-            data = new ActionBarCost[ActionBar.CELL_COUNT * ActionBar.BIT_PER_CELL][];
-            for (int s = 0; s < data.Length; s++)
-            {
-                data[s] = new ActionBarCost[ActionBar.NUM_OF_COST];
-            }
-
-            Reset();
-        }
-
-        public void Read(IAddonDataProvider reader)
-        {
-            int meta = reader.GetInt(cActionbarMeta);
-            int cost = reader.GetInt(cActionbarNum);
-            if ((cost == 0 && meta == 0) || meta < ActionBar.ACTION_SLOT_MUL)
-                return;
-
-            int slotIdx = (meta / ActionBar.ACTION_SLOT_MUL) - 1;
-            int costIdx = (meta / COST_ORDER % 10) - 1;
-            int type = meta % POWER_TYPE_MOD;
-
-            ActionBarCost old = data[slotIdx][costIdx];
-            data[slotIdx][costIdx] = new((PowerType)type, cost);
-
-            if (cost != old.Cost || (PowerType)type != old.PowerType)
-                OnActionCostChanged?.Invoke(this, new(slotIdx + 1, data[slotIdx][costIdx]));
-
-            if (slotIdx > Count)
-                Count = slotIdx;
-        }
-
-        public void Reset()
-        {
-            Count = 0;
-            for (int s = 0; s < data.Length; s++)
-            {
-                for (int c = 0; c < ActionBar.NUM_OF_COST; c++)
-                {
-                    data[s][c] = defaultCost;
-                }
-            }
-            OnActionCostReset?.Invoke();
-        }
-
-        public ActionBarCost GetCostByActionBarSlot(KeyAction keyAction, int costIndex = 0)
-        {
-            int slotIdx = keyAction.SlotIndex;
-            return data[slotIdx][costIndex];
-        }
+        int slotIdx = keyAction.SlotIndex;
+        int index = (slotIdx * NUM_OF_COST) + costIndex;
+        return Data[index];
     }
 }

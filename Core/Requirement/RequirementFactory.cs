@@ -1,783 +1,829 @@
-using Microsoft.Extensions.Logging;
 using System;
+using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Reflection;
+
+using static System.Math;
+
 using Core.Database;
+using Core.Goals;
+
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+
 using SharedLib;
 using SharedLib.NpcFinder;
-using Core.Goals;
-using System.Runtime.InteropServices;
 
-namespace Core
+using static Core.Requirement;
+
+namespace Core;
+
+public sealed partial class RequirementFactory
 {
-    public sealed partial class RequirementFactory
+    private readonly ILogger logger;
+    private readonly AddonReader addonReader;
+    private readonly PlayerReader playerReader;
+    private readonly BuffStatus<IPlayer> buffs;
+    private readonly BagReader bagReader;
+    private readonly EquipmentReader equipmentReader;
+    private readonly SpellBookReader spellBookReader;
+    private readonly TalentReader talentReader;
+    private readonly CreatureDB creatureDb;
+    private readonly ItemDB itemDb;
+    private readonly CombatLog combatLog;
+
+    private readonly ClassConfiguration classConfig;
+
+    private readonly ActionBarBits<ICurrentAction> currentAction;
+    private readonly ActionBarBits<IUsableAction> usableAction;
+    private readonly ActionBarCooldownReader cooldownReader;
+    private readonly ActionBarCostReader costReader;
+
+    private readonly FrozenDictionary<int, SchoolMask> npcSchoolImmunity;
+
+    private readonly string[] negateKeywords =
+    [
+        "not ",
+        SymbolNegate
+    ];
+
+    private readonly Dictionary<string, Func<int>> intVariables;
+
+    private readonly FrozenDictionary<string, Func<bool>> boolVariables;
+
+    private readonly FrozenDictionary<string, Func<string, Requirement>> requirementMap;
+
+    private const char SEP1 = ':';
+    private const char SEP2 = ',';
+
+    private const string Swimming = "Swimming";
+    private const string Falling = "Falling";
+    private const string Flying = "Flying";
+
+    public const string AddVisible = "AddVisible";
+    public const string Drink = "Drink";
+    public const string Food = "Food";
+
+    public const string HealthP = "Health%";
+    public const string ManaP = "Mana%";
+
+    private const string greaterThenOrEqual = ">=";
+    private const string lessThenOrEqual = "<=";
+    private const string greaterThen = ">";
+    private const string lessThen = "<";
+    private const string equals = "==";
+    private const string modulo = "%";
+
+    public RequirementFactory(IServiceProvider sp, ClassConfiguration classConfig)
     {
-        private readonly ILogger logger;
-        private readonly AddonReader addonReader;
-        private readonly PlayerReader playerReader;
-        private readonly BagReader bagReader;
-        private readonly EquipmentReader equipmentReader;
-        private readonly SpellBookReader spellBookReader;
-        private readonly TalentReader talentReader;
-        private readonly CreatureDB creatureDb;
-        private readonly ItemDB itemDb;
-        private readonly AuraTimeReader playerBuffTimeReader;
-        private readonly AuraTimeReader targetDebuffTimeReader;
+        this.logger = sp.GetRequiredService<ILogger>();
+        this.addonReader = sp.GetRequiredService<AddonReader>();
+        this.playerReader = sp.GetRequiredService<PlayerReader>();
+        this.buffs = sp.GetRequiredService<BuffStatus<IPlayer>>();
+        this.bagReader = sp.GetRequiredService<BagReader>();
+        this.equipmentReader = sp.GetRequiredService<EquipmentReader>();
+        this.spellBookReader = sp.GetRequiredService<SpellBookReader>();
+        this.talentReader = sp.GetRequiredService<TalentReader>();
+        this.creatureDb = sp.GetRequiredService<CreatureDB>();
+        this.itemDb = sp.GetRequiredService<ItemDB>();
 
-        private KeyAction[] keyActions = Array.Empty<KeyAction>();
+        this.currentAction = sp.GetRequiredService<ActionBarBits<ICurrentAction>>();
+        this.usableAction = sp.GetRequiredService<ActionBarBits<IUsableAction>>();
+        this.cooldownReader = sp.GetRequiredService<ActionBarCooldownReader>();
+        this.costReader = sp.GetRequiredService<ActionBarCostReader>();
 
-        private readonly Dictionary<int, SchoolMask[]> immunityBlacklist;
+        this.classConfig = classConfig;
 
-        private readonly string[] negateKeywords = new string[2]
+        this.npcSchoolImmunity = classConfig.NpcSchoolImmunity.ToFrozenDictionary();
+
+        NpcNameFinder npcNameFinder = sp.GetRequiredService<NpcNameFinder>();
+        AddonBits bits = sp.GetRequiredService<AddonBits>();
+        BuffStatus<IPlayer> playerBuffs = sp.GetRequiredService<BuffStatus<IPlayer>>();
+        BuffStatus<IFocus> focusBuffs = sp.GetRequiredService<BuffStatus<IFocus>>();
+        TargetDebuffStatus targetDebuffs = sp.GetRequiredService<TargetDebuffStatus>();
+        SessionStat sessionStat = sp.GetRequiredService<SessionStat>();
+        combatLog = sp.GetRequiredService<CombatLog>();
+
+        var playerBuff = sp.GetRequiredService<AuraTimeReader<IPlayerBuffTimeReader>>();
+        var targetDebuff = sp.GetRequiredService<AuraTimeReader<ITargetDebuffTimeReader>>();
+        var targetBuff = sp.GetRequiredService<AuraTimeReader<ITargetBuffTimeReader>>();
+        var focusBuff = sp.GetRequiredService<AuraTimeReader<IFocusBuffTimeReader>>();
+
+        Dictionary<string, Func<string, Requirement>> requirementMap = new()
         {
-            "not ",
-            "!"
+            { greaterThenOrEqual, CreateGreaterOrEquals },
+            { lessThenOrEqual, CreateLesserOrEquals },
+            { greaterThen, CreateGreaterThen },
+            { lessThen, CreateLesserThen },
+            { equals, CreateEquals },
+            { modulo, CreateModulo },
+            { "npcID:", CreateNpcId },
+            { "BagItem:", CreateBagItem },
+            { "SpellInRange:", CreateSpellInRange },
+            { "TargetCastingSpell", CreateTargetCastingSpell },
+            { "Form", CreateForm },
+            { "Race", CreateRace },
+            { "Spell", CreateSpell },
+            { "Talent", CreateTalent },
+            { "Trigger:", CreateTrigger },
+            { "Usable:", CreateUsable }
+        };
+        this.requirementMap = requirementMap.ToFrozenDictionary();
+
+        Dictionary<string, Func<bool>> boolVariables = new(StringComparer.InvariantCultureIgnoreCase)
+        {
+            // Target Based
+            { "TargetYieldXP", bits.Target_NotTrivial },
+            { "TargetsMe", playerReader.TargetsMe },
+            { "TargetsPet", playerReader.TargetsPet },
+            { "TargetsNone", playerReader.TargetsNone },
+
+            { AddVisible, npcNameFinder._PotentialAddsExist },
+            { "InCombat", bits.Combat },
+
+            // Range
+            { "InMeleeRange", playerReader.IsInMeleeRange },
+            { "InCloseMeleeRange", playerReader.InCloseMeleeRange },
+            { "InDeadZoneRange", playerReader.IsInDeadZone },
+            { "OutOfCombatRange", playerReader.OutOfCombatRange },
+            { "InCombatRange", playerReader.WithInCombatRange },
+            
+            // Pet
+            { "Has Pet", bits.Pet },
+            { "Pet Happy", bits.Pet_Happy },
+            { "Pet HasTarget", playerReader.PetTarget },
+            { "Mounted", bits.Mounted },
+            
+            // Auto Spell
+            { "AutoAttacking", bits.Auto_Attack },
+            { "Shooting", bits.Shoot },
+            { "AutoShot", bits.AutoShot },
+            
+            // Temporary Enchants
+            { "HasMainHandEnchant", bits.MainHandTempEnchant },
+            { "HasOffHandEnchant", bits.OffHandTempEnchant },
+            
+            // Equipment - Bag
+            { "Items Broken", bits.Items_Broken },
+            { "BagFull", bagReader.BagsFull },
+            { "BagGreyItem", bagReader.AnyGreyItem },
+            { "HasRangedWeapon", equipmentReader.RangedWeapon },
+            { "HasAmmo", bits.Ammo },
+
+            { "Casting", playerReader.IsCasting },
+            { "HasTarget", bits.Target },
+            { "TargetHostile", bits.Target_Hostile },
+            { "TargetAlive", bits.Target_Alive },
+
+            // Player Affected
+            { Swimming, bits.Swimming },
+            { Falling, bits.Falling },
+            { Flying, bits.Flying },
+            { "Dead", bits.Dead },
         };
 
-        private readonly Dictionary<string, Func<int>> intVariables;
+        AddAura("", boolVariables, playerBuffs);
+        AddAura("F_", boolVariables, focusBuffs);
+        AddAura("", boolVariables, targetDebuffs);
 
-        private readonly Dictionary<string, Func<bool>> boolVariables;
+        this.boolVariables = boolVariables.ToFrozenDictionary();
 
-        private readonly Dictionary<string, Func<string, Requirement>> requirementMap;
-
-        public const string AddVisible = "AddVisible";
-        public const string Drink = "Drink";
-        public const string Food = "Food";
-
-        public RequirementFactory(ILogger logger, AddonReader addonReader,
-            NpcNameFinder npcNameFinder, Dictionary<int, SchoolMask[]> immunityBlacklist)
+        intVariables = new Dictionary<string, Func<int>>
         {
-            this.logger = logger;
-            this.addonReader = addonReader;
-            this.playerReader = addonReader.PlayerReader;
-            this.bagReader = addonReader.BagReader;
-            this.equipmentReader = addonReader.EquipmentReader;
-            this.spellBookReader = addonReader.SpellBookReader;
-            this.talentReader = addonReader.TalentReader;
-            this.creatureDb = addonReader.CreatureDb;
-            this.itemDb = addonReader.ItemDb;
-            this.immunityBlacklist = immunityBlacklist;
-            this.playerBuffTimeReader = addonReader.PlayerBuffTimeReader;
-            this.targetDebuffTimeReader = addonReader.TargetDebuffTimeReader;
+            { HealthP, playerReader.HealthPercent },
+            { "TargetHealth%", playerReader.TargetHealthPercent },
+            { "FocusHealth%", playerReader.FocusHealthPercent },
+            { "PetHealth%", playerReader.PetHealthPercent },
+            { ManaP, playerReader.ManaPercent },
+            { "Mana", playerReader.ManaCurrent },
+            { "Energy", playerReader.PTCurrent },
+            { "Rage", playerReader.PTCurrent },
+            { "RunicPower", playerReader.PTCurrent },
+            { "BloodRune", playerReader.BloodRune },
+            { "FrostRune", playerReader.FrostRune },
+            { "UnholyRune", playerReader.UnholyRune },
+            { "TotalRune", playerReader.MaxRune },
+            { "Combo Point", playerReader.ComboPoints },
+            { "Durability%", playerReader.AvgEquipDurability },
+            { "BagCount", bagReader.BagItemCount },
+            { "FoodCount", bagReader.FoodItemCount },
+            { "DrinkCount", bagReader.DrinkItemCount },
+            { "MobCount", combatLog.DamageTakenCount },
+            { "MinRange", playerReader.MinRange },
+            { "MaxRange", playerReader.MaxRange },
+            { "LastAutoShotMs", playerReader.AutoShot.ElapsedMs },
+            { "LastMainHandMs", playerReader.MainHandSwing.ElapsedMs },
+            { "LastTargetDodgeMs", LastTargetDodgeMs },
+            //"CD"
+            //"CD_{KeyAction.Name}
+            //"Cost"
+            //"Cost_{KeyAction.Name}"
+            //"Cost_{KeyAction.Name}_{0..4}"
+            //"Buff_{textureId}"
+            //"Debuff_{textureId}"
+            //"TBuff_{textureId}"
+            //"FBuff_{textureId}"
+            { "MainHandSpeed", playerReader.MainHandSpeedMs },
+            { "MainHandSwing", MainHandSwing },
+            { "RangedSpeed", playerReader.RangedSpeedMs },
+            { "RangedSwing", RangedSwing },
+            { "CurGCD", playerReader.GCD._Value },
+            { "GCD", CastingHandler._GCD },
 
-            requirementMap = new()
-            {
-                { ">=", CreateGreaterOrEquals },
-                { "<=", CreateLesserOrEquals },
-                { ">", CreateGreaterThen },
-                { "<", CreateLesserThen },
-                { "==", CreateEquals },
-                { "npcID:", CreateNpcId },
-                { "BagItem:", CreateBagItem },
-                { "SpellInRange:", CreateSpellInRange },
-                { "TargetCastingSpell", CreateTargetCastingSpell },
-                { "Form", CreateForm },
-                { "Race", CreateRace },
-                { "Spell", CreateSpell },
-                { "Talent", CreateTalent },
-                { "Trigger:", CreateTrigger },
-                { "Usable:", CreateUsable }
-            };
+            // Session Stat
+            { "Deaths", sessionStat._Deaths },
+            { "Kills", sessionStat._Kills },
+        };
 
-            boolVariables = new()
-            {
-                // Target Based
-                { "TargetYieldXP", playerReader.Bits.TargetIsNotTrivial },
-                { "TargetsMe", playerReader.TargetsMe },
-                { "TargetsPet", playerReader.TargetsPet },
-                { "TargetsNone", playerReader.TargetsNone },
+        InitUserDefinedIntVariables(classConfig.IntVariables,
+            playerBuff, targetDebuff,
+            targetBuff, focusBuff);
+    }
 
-                { AddVisible, npcNameFinder._PotentialAddsExist },
-                { "InCombat", playerReader.Bits.PlayerInCombat },
-
-                // Range
-                { "InMeleeRange", playerReader.IsInMeleeRange },
-                { "InCloseMeleeRange", playerReader.InCloseMeleeRange },
-                { "InDeadZoneRange", playerReader.IsInDeadZone },
-                { "OutOfCombatRange", playerReader.OutOfCombatRange },
-                { "InCombatRange", playerReader.WithInCombatRange },
-                
-                // Pet
-                { "Has Pet", playerReader.Bits.HasPet },
-                { "Pet Happy", playerReader.Bits.PetHappy },
-                { "Pet HasTarget", playerReader.PetHasTarget },
-                { "Mounted", playerReader.Bits.IsMounted },
-                
-                // Auto Spell
-                { "AutoAttacking", playerReader.Bits.SpellOn_AutoAttack },
-                { "Shooting", playerReader.Bits.SpellOn_Shoot },
-                { "AutoShot", playerReader.Bits.SpellOn_AutoShot },
-                
-                // Temporary Enchants
-                { "HasMainHandEnchant", playerReader.Bits.HasMainHandTempEnchant },
-                { "HasOffHandEnchant", playerReader.Bits.HasOffHandTempEnchant },
-                
-                // Equipment - Bag
-                { "Items Broken", playerReader.Bits.ItemsAreBroken },
-                { "BagFull", bagReader.BagsFull },
-                { "BagGreyItem", bagReader.AnyGreyItem },
-                { "HasRangedWeapon", equipmentReader.HasRanged },
-                { "HasAmmo", playerReader.Bits.HasAmmo },
-
-                { "Casting", playerReader.IsCasting },
-
-                // General Buff Condition
-                { Food, playerReader.Buffs.Food },
-                { Drink, playerReader.Buffs.Drink },
-                { "Mana Regeneration", playerReader.Buffs.Mana_Regeneration },
-                { "Well Fed", playerReader.Buffs.Well_Fed },
-                { "Clearcasting", playerReader.Buffs.Clearcasting },
-
-                // Player Affected
-                { "Swimming", playerReader.Bits.IsSwimming },
-                { "Falling", playerReader.Bits.IsFalling },
-
-                //Priest
-                { "Fortitude", playerReader.Buffs.Fortitude },
-                { "InnerFire", playerReader.Buffs.InnerFire },
-                { "Divine Spirit", playerReader.Buffs.DivineSpirit },
-                { "Renew", playerReader.Buffs.Renew },
-                { "Shield", playerReader.Buffs.Shield },
-
-                // Druid
-                { "Mark of the Wild", playerReader.Buffs.MarkOfTheWild },
-                { "Thorns", playerReader.Buffs.Thorns },
-                { "TigersFury", playerReader.Buffs.TigersFury },
-                { "Prowl", playerReader.Buffs.Prowl },
-                { "Rejuvenation", playerReader.Buffs.Rejuvenation },
-                { "Regrowth", playerReader.Buffs.Regrowth },
-                { "Omen of Clarity", playerReader.Buffs.OmenOfClarity },
-
-                // Paladin
-                { "Seal of Righteousness", playerReader.Buffs.SealofRighteousness },
-                { "Seal of the Crusader", playerReader.Buffs.SealoftheCrusader },
-                { "Seal of Command", playerReader.Buffs.SealofCommand },
-                { "Seal of Wisdom", playerReader.Buffs.SealofWisdom },
-                { "Seal of Light", playerReader.Buffs.SealofLight },
-                { "Seal of Blood", playerReader.Buffs.SealofBlood },
-                { "Seal of Vengeance", playerReader.Buffs.SealofVengeance },
-                { "Blessing of Might", playerReader.Buffs.BlessingofMight },
-                { "Blessing of Protection", playerReader.Buffs.BlessingofProtection },
-                { "Blessing of Wisdom", playerReader.Buffs.BlessingofWisdom },
-                { "Blessing of Kings", playerReader.Buffs.BlessingofKings },
-                { "Blessing of Salvation", playerReader.Buffs.BlessingofSalvation },
-                { "Blessing of Sanctuary", playerReader.Buffs.BlessingofSanctuary },
-                { "Blessing of Light", playerReader.Buffs.BlessingofLight },
-                { "Righteous Fury", playerReader.Buffs.RighteousFury },
-                { "Divine Protection", playerReader.Buffs.DivineProtection },
-                { "Avenging Wrath", playerReader.Buffs.AvengingWrath },
-                { "Holy Shield", playerReader.Buffs.HolyShield },
-                { "Divine Shield", playerReader.Buffs.DivineShield },
-
-                // Mage
-                { "Frost Armor", playerReader.Buffs.FrostArmor },
-                { "Ice Armor", playerReader.Buffs.FrostArmor },
-                { "Molten Armor", playerReader.Buffs.FrostArmor },
-                { "Mage Armor", playerReader.Buffs.FrostArmor },
-                { "Arcane Intellect", playerReader.Buffs.ArcaneIntellect },
-                { "Ice Barrier", playerReader.Buffs.IceBarrier },
-                { "Ward", playerReader.Buffs.Ward },
-                { "Fire Power", playerReader.Buffs.FirePower },
-                { "Mana Shield", playerReader.Buffs.ManaShield },
-                { "Presence of Mind", playerReader.Buffs.PresenceOfMind },
-                { "Arcane Power", playerReader.Buffs.ArcanePower },
-                
-                // Rogue
-                { "Slice and Dice", playerReader.Buffs.SliceAndDice },
-                { "Stealth", playerReader.Buffs.Stealth },
-                
-                // Warrior
-                { "Battle Shout", playerReader.Buffs.BattleShout },
-                { "Bloodrage", playerReader.Buffs.Bloodrage },
-                
-                // Warlock
-                { "Demon Skin", playerReader.Buffs.Demon },
-                { "Demon Armor", playerReader.Buffs.Demon },
-                { "Soul Link", playerReader.Buffs.SoulLink },
-                { "Soulstone Resurrection", playerReader.Buffs.SoulstoneResurrection },
-                { "Shadow Trance", playerReader.Buffs.ShadowTrance },
-                { "Fel Armor", playerReader.Buffs.FelArmor },
-                { "Fel Domination", playerReader.Buffs.FelDomination },
-                { "Demonic Sacrifice", playerReader.Buffs.DemonicSacrifice },
-                
-                // Shaman
-                { "Lightning Shield", playerReader.Buffs.LightningShield },
-                { "Water Shield", playerReader.Buffs.WaterShield },
-                { "Shamanistic Focus", playerReader.Buffs.ShamanisticFocus },
-                { "Focused", playerReader.Buffs.ShamanisticFocus },
-                { "Stoneskin", playerReader.Buffs.Stoneskin },
-                
-                //Hunter
-                { "Aspect of the Cheetah", playerReader.Buffs.AspectoftheCheetah },
-                { "Aspect of the Pack", playerReader.Buffs.AspectofthePack },
-                { "Aspect of the Hawk", playerReader.Buffs.AspectoftheHawk },
-                { "Aspect of the Monkey", playerReader.Buffs.AspectoftheMonkey },
-                { "Aspect of the Viper", playerReader.Buffs.AspectoftheViper },
-                { "Rapid Fire", playerReader.Buffs.RapidFire },
-                { "Quick Shots", playerReader.Buffs.QuickShots },
-                { "Trueshot Aura", playerReader.Buffs.TrueshotAura },
-                { "Aspect of the Dragonhawk", playerReader.Buffs.AspectoftheDragonhawk },
-                { "Lock and Load", playerReader.Buffs.LockandLoad },
-
-                //Death Knight
-                { "Blood Tap", playerReader.Buffs.BloodTap },
-                { "Horn of Winter", playerReader.Buffs.HornofWinter },
-                { "Icebound Fortitude", playerReader.Buffs.IceboundFortitude },
-                { "Path of Frost", playerReader.Buffs.PathofFrost },
-                { "Anti-Magic Shell", playerReader.Buffs.AntiMagicShell },
-                { "Army of the Dead", playerReader.Buffs.ArmyoftheDead },
-                { "Vampiric Blood", playerReader.Buffs.VampiricBlood },
-                { "Dancing Rune Weapon", playerReader.Buffs.DancingRuneWeapon },
-                { "Unbreakable Armor", playerReader.Buffs.UnbreakableArmor },
-                { "Bone Shield", playerReader.Buffs.BoneShield },
-                { "Summon Gargoyle", playerReader.Buffs.SummonGargoyle },
-                { "Freezing Fog", playerReader.Buffs.FreezingFog },
-
-                // Debuff Section
-                // Druid Debuff
-                { "Demoralizing Roar", playerReader.TargetDebuffs.Roar },
-                { "Faerie Fire", playerReader.TargetDebuffs.FaerieFire },
-                { "Rip", playerReader.TargetDebuffs.Rip },
-                { "Moonfire", playerReader.TargetDebuffs.Moonfire },
-                { "Entangling Roots", playerReader.TargetDebuffs.EntanglingRoots },
-                { "Rake", playerReader.TargetDebuffs.Rake },
-                
-                // Paladin Debuff
-                { "Judgement of the Crusader", playerReader.TargetDebuffs.JudgementoftheCrusader },
-                { "Hammer of Justice", playerReader.TargetDebuffs.HammerOfJustice },
-                { "Judgement of Wisdom", playerReader.TargetDebuffs.JudgementofWisdom },
-                { "Judgement of Light", playerReader.TargetDebuffs.JudgementofLight },
-                { "Judgement of Justice", playerReader.TargetDebuffs.JudgementofJustice },
-                { "Judgement of Any", playerReader.TargetDebuffs.JudgementAny },
-
-                // Warrior Debuff
-                { "Rend", playerReader.TargetDebuffs.Rend },
-                { "Thunder Clap", playerReader.TargetDebuffs.ThunderClap },
-                { "Hamstring", playerReader.TargetDebuffs.Hamstring },
-                { "Charge Stun", playerReader.TargetDebuffs.ChargeStun },
-                
-                // Priest Debuff
-                { "Shadow Word: Pain", playerReader.TargetDebuffs.ShadowWordPain },
-                
-                // Mage Debuff
-                { "Frostbite", playerReader.TargetDebuffs.Frostbite },
-                { "Slow", playerReader.TargetDebuffs.Slow },
-                
-                // Warlock Debuff
-                { "Curse of Weakness", playerReader.TargetDebuffs.Curseof },
-                { "Curse of Elements", playerReader.TargetDebuffs.Curseof },
-                { "Curse of Recklessness", playerReader.TargetDebuffs.Curseof },
-                { "Curse of Shadow", playerReader.TargetDebuffs.Curseof },
-                { "Curse of Agony", playerReader.TargetDebuffs.Curseof },
-                { "Curse of", playerReader.TargetDebuffs.Curseof },
-                { "Corruption", playerReader.TargetDebuffs.Corruption },
-                { "Immolate", playerReader.TargetDebuffs.Immolate },
-                { "Siphon Life", playerReader.TargetDebuffs.SiphonLife },
-                
-                // Hunter Debuff
-                { "Serpent Sting", playerReader.TargetDebuffs.SerpentSting },
-                { "Hunter's Mark", playerReader.TargetDebuffs.HuntersMark },
-                { "Viper Sting", playerReader.TargetDebuffs.ViperSting },
-                { "Explosive Shot", playerReader.TargetDebuffs.ExplosiveShot },
-                { "Black Arrow", playerReader.TargetDebuffs.BlackArrow },
-
-                // Death Knight Debuff
-                { "Blood Plague", playerReader.TargetDebuffs.BloodPlague },
-                { "Frost Fever", playerReader.TargetDebuffs.FrostFever },
-                { "Strangulate", playerReader.TargetDebuffs.Strangulate },
-                { "Chains of Ice", playerReader.TargetDebuffs.ChainsofIce },
-            };
-
-            intVariables = new Dictionary<string, Func<int>>
-            {
-                { "Health%", playerReader.HealthPercent },
-                { "TargetHealth%", playerReader.TargetHealthPercentage },
-                { "PetHealth%", playerReader.PetHealthPercentage },
-                { "Mana%", playerReader.ManaPercentage },
-                { "Mana", playerReader.ManaCurrent },
-                { "Energy", playerReader.PTCurrent },
-                { "Rage", playerReader.PTCurrent },
-                { "RunicPower", playerReader.PTCurrent },
-                { "BloodRune", playerReader.BloodRune },
-                { "FrostRune", playerReader.FrostRune },
-                { "UnholyRune", playerReader.UnholyRune },
-                { "TotalRune", playerReader.MaxRune },
-                { "Combo Point", playerReader.ComboPoints },
-                { "Durability%", playerReader.AvgEquipDurability },
-                { "BagCount", bagReader.BagItemCount },
-                { "FoodCount", addonReader.BagReader.FoodItemCount },
-                { "DrinkCount", addonReader.BagReader.DrinkItemCount },
-                { "MobCount", addonReader.DamageTakenCount },
-                { "MinRange", playerReader.MinRange },
-                { "MaxRange", playerReader.MaxRange },
-                { "LastAutoShotMs", playerReader.AutoShot.ElapsedMs },
-                { "LastMainHandMs", playerReader.MainHandSwing.ElapsedMs },
-                { "LastTargetDodgeMs", () => Math.Max(0, addonReader.CombatLog.TargetDodge.ElapsedMs()) },
-                //"CD_{KeyAction.Name}
-                //"Cost_{KeyAction.Name}"
-                //"Buff_{textureId}"
-                //"Debuff_{textureId}"
-                //"TBuff_{textureId}"
-                { "MainHandSpeed", playerReader.MainHandSpeedMs },
-                { "MainHandSwing", () => Math.Clamp(playerReader.MainHandSwing.ElapsedMs() - playerReader.MainHandSpeedMs(), -playerReader.MainHandSpeedMs(), 0) },
-                { "CurGCD", playerReader.GCD._Value },
-                { "GCD", CastingHandler._GCD }
-            };
-        }
-
-        public void InitialiseRequirements(KeyAction item, KeyActions? keyActions)
+    private static void AddAura<T>(string prefix,
+        Dictionary<string, Func<bool>> boolVariables, T t) where T : notnull
+    {
+        foreach (MethodInfo mInfo in t.GetType().GetMethods(
+            BindingFlags.DeclaredOnly |
+            BindingFlags.Public | BindingFlags.Instance))
         {
-            if (keyActions != null)
-            {
-                int sizeBefore = this.keyActions.Length;
-                Array.Resize(ref this.keyActions, this.keyActions.Length + keyActions.Sequence.Length);
+            if (mInfo.ReturnType != typeof(bool))
+                continue;
 
-                for (int i = 0; i < keyActions.Sequence.Length; i++)
+            NamesAttribute? names =
+                (NamesAttribute?)Attribute.GetCustomAttribute(
+                    mInfo, typeof(NamesAttribute));
+
+            if (names is not null)
+            {
+                foreach (string name in names.Values)
                 {
-                    this.keyActions[sizeBefore + i] = keyActions.Sequence[i];
+                    boolVariables.Add($"{prefix}{name}",
+                        mInfo.CreateDelegate<Func<bool>>(t));
                 }
             }
-
-            if (item.Name is Drink or Food)
-                AddConsumableRequirement(item);
-
-            InitPerKeyActionRequirements(item);
-
-            List<Requirement> requirements = new();
-
-            foreach (string requirement in CollectionsMarshal.AsSpan(item.Requirements))
+            else
             {
-                List<string> expressions = InfixToPostfix.Convert(requirement);
-                Stack<Requirement> stack = new();
-                foreach (string expr in CollectionsMarshal.AsSpan(expressions))
-                {
-                    if (expr.Contains(Requirement.SymbolAnd))
-                    {
-                        Requirement a = stack.Pop();
-                        Requirement b = stack.Pop();
-                        b.And(a);
-
-                        stack.Push(b);
-                    }
-                    else if (expr.Contains(Requirement.SymbolOr))
-                    {
-                        Requirement a = stack.Pop();
-                        Requirement b = stack.Pop();
-                        b.Or(a);
-
-                        stack.Push(b);
-                    }
-                    else
-                    {
-                        string trim = expr.Trim();
-                        if (string.IsNullOrEmpty(trim))
-                        {
-                            continue;
-                        }
-
-                        stack.Push(CreateRequirement(item.Name, trim));
-                    }
-                }
-
-                requirements.Add(stack.Pop());
+                string name = $"{prefix}{mInfo.Name.Replace("_", " ")}";
+                boolVariables.Add(name, mInfo.CreateDelegate<Func<bool>>(t));
             }
+        }
+    }
 
-            AddMinRequirement(requirements, item);
-            AddTargetIsCastingRequirement(requirements, item, playerReader);
+    private int LastTargetDodgeMs()
+    {
+        return Max(0, combatLog.TargetDodge.ElapsedMs());
+    }
 
-            if (item.WhenUsable && !string.IsNullOrEmpty(item.Key))
+    private int MainHandSwing()
+    {
+        return Clamp(
+            playerReader.MainHandSwing.ElapsedMs() -
+            playerReader.MainHandSpeedMs(),
+            -playerReader.MainHandSpeedMs(), 0);
+    }
+
+    private int RangedSwing()
+    {
+        return Clamp(
+            playerReader.AutoShot.ElapsedMs() -
+            playerReader.RangedSpeedMs(),
+            -playerReader.RangedSpeedMs(), 0);
+    }
+
+    public void Init(KeyAction item)
+    {
+        if (item.Name is Drink or Food)
+            AddConsumable(item);
+
+        List<Requirement> list = new();
+
+        if (item.Slot > 0)
+        {
+            InitPerKeyAction(item);
+
+            AddMinPower(list, item, costReader, buffs);
+            AddGameCooldown(list, item, playerReader, intVariables);
+
+            if (item.WhenUsable)
             {
-                requirements.Add(CreateActionUsableRequirement(item, playerReader, addonReader.UsableAction));
+                list.Add(
+                    CreateActionUsable(item, playerReader,
+                    classConfig.Form, costReader, usableAction));
 
-                if (item.Slot > 0)
-                    requirements.Add(CreateActionNotInGameCooldown(item));
+                list.Add(CreateActionCurrent(item, currentAction));
             }
-
-            AddCooldownRequirement(requirements, item);
-            AddChargeRequirement(requirements, item);
-
-            AddSpellSchoolRequirement(requirements, item, playerReader, immunityBlacklist);
-
-            item.RequirementsRuntime = requirements.ToArray();
         }
 
-        public void InitUserDefinedIntVariables(Dictionary<string, int> intKeyValues,
-            AuraTimeReader playerBuffTimeReader, AuraTimeReader targetDebuffTimeReader,
-            AuraTimeReader targetBuffTimeReader)
-        {
-            foreach ((string key, int value) in intKeyValues)
-            {
-                int f() => value;
+        Process(list, item.Name, item.Requirements);
 
-                if (!intVariables.TryAdd(key, f))
+        AddTargetIsCasting(list, item, playerReader);
+
+        AddKeyActionCooldown(list, item);
+        AddCharge(list, item);
+
+        AddSpellSchool(list, item, playerReader, npcSchoolImmunity);
+
+        item.RequirementsRuntime = list.ToArray();
+
+        list.Clear();
+        Process(list, item.Name, item.Interrupts);
+        item.InterruptsRuntime = list.ToArray();
+    }
+
+    private void Process(List<Requirement> output, string name,
+        List<string> requirements)
+    {
+        foreach (string requirement in CollectionsMarshal.AsSpan(requirements))
+        {
+            List<string> expressions = InfixToPostfix.Convert(requirement);
+            Stack<Requirement> stack = new();
+            foreach (string expr in CollectionsMarshal.AsSpan(expressions))
+            {
+                if (expr.Contains(SymbolAnd))
                 {
-                    throw new Exception($"Unable to add user defined variable to values. [{key} -> {value}]");
+                    Requirement a = stack.Pop();
+                    Requirement b = stack.Pop();
+                    b.And(a);
+
+                    stack.Push(b);
+                }
+                else if (expr.Contains(SymbolOr))
+                {
+                    Requirement a = stack.Pop();
+                    Requirement b = stack.Pop();
+                    b.Or(a);
+
+                    stack.Push(b);
                 }
                 else
                 {
-                    if (key.StartsWith("Buff_"))
+                    string trim = expr.Trim();
+                    if (string.IsNullOrEmpty(trim))
                     {
-                        int l() => playerBuffTimeReader.GetRemainingTimeMs(value);
-                        intVariables.TryAdd($"{value}", l);
-                    }
-                    else if (key.StartsWith("Debuff_"))
-                    {
-                        int l() => targetDebuffTimeReader.GetRemainingTimeMs(value);
-                        intVariables.TryAdd($"{value}", l);
-                    }
-                    else if (key.StartsWith("TBuff_"))
-                    {
-                        int l() => targetBuffTimeReader.GetRemainingTimeMs(value);
-                        intVariables.TryAdd($"{value}", l);
+                        continue;
                     }
 
-                    LogUserDefinedValue(logger, nameof(RequirementFactory), key, value);
+                    LogProcessing(logger, name, trim);
+                    stack.Push(CreateRequirement(trim));
                 }
             }
+            output.Add(stack.Pop());
         }
+    }
 
-        public void InitDynamicBindings(KeyAction item)
+    public void InitUserDefinedIntVariables(Dictionary<string, int> intKeyValues,
+        AuraTimeReader<IPlayerBuffTimeReader> playerBuffTimeReader,
+        AuraTimeReader<ITargetDebuffTimeReader> targetDebuffTimeReader,
+        AuraTimeReader<ITargetBuffTimeReader> targetBuffTimeReader,
+        AuraTimeReader<IFocusBuffTimeReader> focusBuffTimeReader)
+    {
+        foreach ((string key, int value) in intKeyValues)
         {
-            if (string.IsNullOrEmpty(item.Name) || item.Slot == 0) return;
+            int f() => value;
 
-            BindCooldown(item, addonReader.ActionBarCooldownReader);
-            BindMinCost(item, addonReader.ActionBarCostReader);
-        }
-
-        private void BindCooldown(KeyAction item, ActionBarCooldownReader reader)
-        {
-            string key = $"CD_{item.Name}";
-            if (!intVariables.ContainsKey(key))
+            if (!intVariables.TryAdd(key, f))
             {
-                intVariables.Add(key, () => reader.GetRemainingCooldown(item));
+                throw new Exception($"Unable to add user defined variable to values. [{key} -> {value}]");
             }
-        }
 
-        private void BindMinCost(KeyAction item, ActionBarCostReader reader)
-        {
-            string key = $"Cost_{item.Name}";
-            if (!intVariables.ContainsKey(key))
+            if (key.StartsWith("Buff_"))
             {
-                intVariables.Add(key,
-                    () => reader.GetCostByActionBarSlot(item).Cost);
+                int l() => playerBuffTimeReader.GetRemainingTimeMs(value);
+                intVariables.TryAdd($"{value}", l);
             }
-        }
-
-        private void InitPerKeyActionRequirements(KeyAction item)
-        {
-            InitPerKeyActionRequirementByKey(item, "CD");
-            InitPerKeyActionRequirementByKey(item, "Cost");
-        }
-
-        private void InitPerKeyActionRequirementByKey(KeyAction item, string prefixKey)
-        {
-            string key = $"{prefixKey}_{item.Name}";
-            intVariables.Remove(prefixKey);
-
-            if (intVariables.TryGetValue(key, out Func<int>? func))
-                intVariables.Add(prefixKey, func);
-        }
-
-        private void AddTargetIsCastingRequirement(List<Requirement> list, KeyAction item, PlayerReader playerReader)
-        {
-            if (item.UseWhenTargetIsCasting != null)
+            else if (key.StartsWith("Debuff_"))
             {
-                bool f() => playerReader.IsTargetCasting() == item.UseWhenTargetIsCasting.Value;
-                string l() => "Target casting";
-                list.Add(new Requirement
+                int l() => targetDebuffTimeReader.GetRemainingTimeMs(value);
+                intVariables.TryAdd($"{value}", l);
+            }
+            else if (key.StartsWith("TBuff_"))
+            {
+                int l() => targetBuffTimeReader.GetRemainingTimeMs(value);
+                intVariables.TryAdd($"{value}", l);
+            }
+            else if (key.StartsWith("FBuff_"))
+            {
+                int l() => focusBuffTimeReader.GetRemainingTimeMs(value);
+                intVariables.TryAdd($"{value}", l);
+            }
+
+            LogUserDefinedValue(logger, nameof(RequirementFactory), key, value);
+        }
+    }
+
+    public void InitAutoBinds(KeyAction item)
+    {
+        if (item.Slot == 0)
+            return;
+
+        BindCooldown(item, cooldownReader);
+        BindMinCost(item, costReader);
+    }
+
+    private void BindCooldown(KeyAction item, ActionBarCooldownReader reader)
+    {
+        string key = $"CD_{item.Name}";
+        if (intVariables.ContainsKey(key))
+            return;
+
+        intVariables.Add(key, get);
+        int get() => reader.Get(item);
+    }
+
+    private void BindMinCost(KeyAction item, ActionBarCostReader reader)
+    {
+        string key = $"Cost_{item.Name}";
+        if (intVariables.ContainsKey(key))
+            return;
+
+        intVariables.Add(key, get);
+        int get() => reader.Get(item).Cost;
+
+        for (int i = 0; i < ActionBar.NUM_OF_COST; i++)
+        {
+            key = $"Cost_{item.Name}_{i}";
+            if (intVariables.ContainsKey(key))
+                return;
+
+            intVariables.Add(key, get_i);
+            int get_i() => reader.Get(item, i).Cost;
+        }
+    }
+
+    private void InitPerKeyAction(KeyAction item)
+    {
+        InitPerKeyAction(item, "CD");
+        InitPerKeyAction(item, "Cost");
+    }
+
+    private void InitPerKeyAction(KeyAction item, string prefixKey)
+    {
+        string key = $"{prefixKey}_{item.Name}";
+        intVariables.Remove(prefixKey);
+
+        if (intVariables.TryGetValue(key, out Func<int>? func))
+            intVariables.Add(prefixKey, func);
+    }
+
+    private void AddTargetIsCasting(List<Requirement> list,
+        KeyAction item, PlayerReader playerReader)
+    {
+        if (item.UseWhenTargetIsCasting == null)
+            return;
+
+        bool f() =>
+            playerReader.IsTargetCasting() == item.UseWhenTargetIsCasting.Value;
+        string l() => "Target casting";
+        list.Add(new Requirement
+        {
+            HasRequirement = f,
+            LogMessage = l
+        });
+    }
+
+    private void AddMinPower(List<Requirement> list, KeyAction item,
+        ActionBarCostReader costReader, BuffStatus<IPlayer> buffs)
+    {
+        AddMinPower(list, item, playerReader, costReader, buffs);
+
+        AddMinComboPoints(list, item, playerReader);
+    }
+
+    private void AddMinPower(List<Requirement> list, KeyAction keyAction,
+        PlayerReader playerReader, ActionBarCostReader costReader,
+        BuffStatus<IPlayer> buffs)
+    {
+        static int Empty() => 0;
+
+        Func<int> formCost = Empty;
+        PowerType formPowerType = PowerType.None;
+
+        if (keyAction.HasForm)
+        {
+            if (!classConfig.Form.Get(keyAction.FormValue, out KeyAction? form))
+                throw new ArgumentNullException(
+                    keyAction.FormValue.ToStringF(),
+                    $"Requires a {nameof(KeyAction)} " +
+                    $"to be defined under {nameof(ClassConfiguration)}." +
+                    $"{nameof(classConfig.Form)}.{nameof(KeyActions.Sequence)} with");
+
+            formPowerType = costReader.Get(form!).PowerType;
+            formCost = formChangeCost;
+
+            int formChangeCost() =>
+                playerReader.Form != keyAction.FormValue
+                ? costReader.Get(form!).Cost
+                : 0;
+        }
+
+        for (int i = 0; i < ActionBar.NUM_OF_COST; i++)
+        {
+            ActionBarCost abc = costReader.Get(keyAction, i);
+            if (abc.Equals(ActionBarCostReader.DefaultCost))
+                continue;
+
+            PowerType type = abc.PowerType;
+
+            Func<bool> fCost;
+            Func<string> sCost;
+
+            int index = i;
+
+            if (formPowerType == type)
+            {
+                fCost = fCostWithForm;
+                bool fCostWithForm()
                 {
-                    HasRequirement = f,
-                    LogMessage = l
-                });
-            }
-        }
-
-        private void AddMinRequirement(List<Requirement> list, KeyAction item)
-        {
-            AddMinPowerTypeRequirement(list, PowerType.Mana, item, playerReader);
-            AddMinPowerTypeRequirement(list, PowerType.Rage, item, playerReader);
-            AddMinPowerTypeRequirement(list, PowerType.Energy, item, playerReader);
-            if (playerReader.Class == UnitClass.DeathKnight)
-            {
-                AddMinPowerTypeRequirement(list, PowerType.RunicPower, item, playerReader);
-                AddMinPowerTypeRequirement(list, PowerType.RuneBlood, item, playerReader);
-                AddMinPowerTypeRequirement(list, PowerType.RuneFrost, item, playerReader);
-                AddMinPowerTypeRequirement(list, PowerType.RuneUnholy, item, playerReader);
-            }
-            AddMinComboPointsRequirement(list, item, playerReader);
-        }
-
-        private void AddMinPowerTypeRequirement(List<Requirement> list, PowerType type, KeyAction keyAction, PlayerReader playerReader)
-        {
-            switch (type)
-            {
-                case PowerType.Mana:
-                    bool fmana() => playerReader.ManaCurrent() >= keyAction.MinMana || playerReader.Buffs.Clearcasting();
-                    string smana() => $"{type.ToStringF()} {playerReader.ManaCurrent()} >= {keyAction.MinMana}";
-                    list.Add(new Requirement
-                    {
-                        HasRequirement = fmana,
-                        LogMessage = smana,
-                        VisibleIfHasRequirement = keyAction.MinMana > 0
-                    });
-                    break;
-                case PowerType.Rage:
-                    bool frage() => playerReader.PTCurrent() >= keyAction.MinRage || playerReader.Buffs.Clearcasting();
-                    string srage() => $"{type.ToStringF()} {playerReader.PTCurrent()} >= {keyAction.MinRage}";
-                    list.Add(new Requirement
-                    {
-                        HasRequirement = frage,
-                        LogMessage = srage,
-                        VisibleIfHasRequirement = keyAction.MinRage > 0
-                    });
-                    break;
-                case PowerType.Energy:
-                    bool fenergy() => playerReader.PTCurrent() >= keyAction.MinEnergy || playerReader.Buffs.Clearcasting();
-                    string senergy() => $"{type.ToStringF()} {playerReader.PTCurrent()} >= {keyAction.MinEnergy}";
-                    list.Add(new Requirement
-                    {
-                        HasRequirement = fenergy,
-                        LogMessage = senergy,
-                        VisibleIfHasRequirement = keyAction.MinEnergy > 0
-                    });
-                    break;
-                case PowerType.RunicPower:
-                    bool frunicpower() => playerReader.PTCurrent() >= keyAction.MinRunicPower;
-                    string srunicpower() => $"{type.ToStringF()} {playerReader.PTCurrent()} >= {keyAction.MinRunicPower}";
-                    list.Add(new Requirement
-                    {
-                        HasRequirement = frunicpower,
-                        LogMessage = srunicpower,
-                        VisibleIfHasRequirement = keyAction.MinRunicPower > 0
-                    });
-                    break;
-                case PowerType.RuneBlood:
-                    bool fbloodrune() => playerReader.BloodRune() >= keyAction.MinRuneBlood;
-                    string sbloodrune() => $"{type.ToStringF()} {playerReader.BloodRune()} >= {keyAction.MinRuneBlood}";
-                    list.Add(new Requirement
-                    {
-                        HasRequirement = fbloodrune,
-                        LogMessage = sbloodrune,
-                        VisibleIfHasRequirement = keyAction.MinRuneBlood > 0
-                    });
-                    break;
-                case PowerType.RuneFrost:
-                    bool ffrostrune() => playerReader.FrostRune() >= keyAction.MinRuneFrost;
-                    string sfrostrune() => $"{type.ToStringF()} {playerReader.FrostRune()} >= {keyAction.MinRuneFrost}";
-                    list.Add(new Requirement
-                    {
-                        HasRequirement = ffrostrune,
-                        LogMessage = sfrostrune,
-                        VisibleIfHasRequirement = keyAction.MinRuneFrost > 0
-                    });
-                    break;
-                case PowerType.RuneUnholy:
-                    bool funholyrune() => playerReader.UnholyRune() >= keyAction.MinRuneUnholy;
-                    string sunholyrune() => $"{type.ToStringF()} {playerReader.UnholyRune()} >= {keyAction.MinRuneUnholy}";
-                    list.Add(new Requirement
-                    {
-                        HasRequirement = funholyrune,
-                        LogMessage = sunholyrune,
-                        VisibleIfHasRequirement = keyAction.MinRuneUnholy > 0
-                    });
-                    break;
-            }
-        }
-
-        private void AddMinComboPointsRequirement(List<Requirement> list, KeyAction item, PlayerReader playerReader)
-        {
-            if (item.MinComboPoints > 0)
-            {
-                bool f() => playerReader.ComboPoints() >= item.MinComboPoints;
-                string s() => $"Combo point {playerReader.ComboPoints()} >= {item.MinComboPoints}";
-                list.Add(new Requirement
-                {
-                    HasRequirement = f,
-                    LogMessage = s
-                });
-            }
-        }
-
-        private static void AddCooldownRequirement(List<Requirement> list, KeyAction item)
-        {
-            if (item.Cooldown > 0)
-            {
-                bool f() => item.GetCooldownRemaining() == 0;
-                string s() => $"Cooldown {item.GetCooldownRemaining() / 1000:F1}";
-                list.Add(new Requirement
-                {
-                    HasRequirement = f,
-                    LogMessage = s,
-                    VisibleIfHasRequirement = false
-                });
-            }
-        }
-
-        private static void AddChargeRequirement(List<Requirement> list, KeyAction item)
-        {
-            if (item.Charge > 1)
-            {
-                bool f() => item.GetChargeRemaining() != 0;
-                string s() => $"Charge {item.GetChargeRemaining()}";
-                list.Add(new Requirement
-                {
-                    HasRequirement = f,
-                    LogMessage = s
-                });
-            }
-        }
-
-        private static void AddConsumableRequirement(KeyAction item)
-        {
-            item.BeforeCastStop = true;
-            item.WhenUsable = true;
-            item.AfterCastWaitBuff = true;
-            item.Item = true;
-
-            item.Requirements.Add($"!{item.Name}");
-            item.Requirements.Add("!Swimming");
-            item.Requirements.Add("!Falling");
-        }
-
-        private void AddSpellSchoolRequirement(List<Requirement> list, KeyAction item, PlayerReader playerReader, Dictionary<int, SchoolMask[]> immunityBlacklist)
-        {
-            if (item.School != SchoolMask.None)
-            {
-                bool f() => !immunityBlacklist.TryGetValue(playerReader.TargetId, out SchoolMask[]? immuneAgaints) || !immuneAgaints.Contains(item.School);
-                string s() => item.School.ToStringF();
-                list.Add(new Requirement
-                {
-                    HasRequirement = f,
-                    LogMessage = s,
-                    VisibleIfHasRequirement = false
-                });
-            }
-        }
-
-
-        public Requirement CreateRequirement(string name, string requirement)
-        {
-            LogProcessingRequirement(logger, name, requirement);
-
-            string? negated = negateKeywords.FirstOrDefault(x => requirement.StartsWith(x));
-            if (!string.IsNullOrEmpty(negated))
-            {
-                requirement = requirement[negated.Length..];
-            }
-
-            string? key = requirementMap.Keys.FirstOrDefault(x => requirement.Contains(x));
-            if (!string.IsNullOrEmpty(key))
-            {
-                Requirement req = requirementMap[key](requirement);
-                if (negated != null)
-                {
-                    req.Negate(negated);
+                    ActionBarCost abc = costReader.Get(keyAction, index);
+                    Func<int> func = PowerTypeDelegate(playerReader, abc.PowerType);
+                    return buffs.Clearcasting() || func() >= abc.Cost + formCost();
                 }
-                return req;
-            }
 
-            if (boolVariables.ContainsKey(requirement))
-            {
-                string s() => requirement;
-                Requirement req = new()
+                sCost = sCostWithForm;
+                string sCostWithForm()
                 {
-                    HasRequirement = boolVariables[requirement],
-                    LogMessage = s
-                };
-
-                if (negated != null)
-                {
-                    req.Negate(negated);
+                    ActionBarCost abc = costReader.Get(keyAction, index);
+                    Func<int> func = PowerTypeDelegate(playerReader, abc.PowerType);
+                    return $"{abc.PowerType.ToStringF()} " +
+                        $"{func()} >= {abc.Cost}{(formCost() > 0 ? $"+{formCost()}" : "")}";
                 }
-                return req;
+            }
+            else
+            {
+                fCost = fCostWithoutForm;
+                bool fCostWithoutForm()
+                {
+                    ActionBarCost abc = costReader.Get(keyAction, index);
+                    Func<int> func = PowerTypeDelegate(playerReader, abc.PowerType);
+                    return buffs.Clearcasting() || func() >= abc.Cost;
+                }
+
+                sCost = sCostWithoutForm;
+                string sCostWithoutForm()
+                {
+                    ActionBarCost abc = costReader.Get(keyAction, index);
+                    Func<int> func = PowerTypeDelegate(playerReader, abc.PowerType);
+                    return $"{abc.PowerType.ToStringF()} {func()} >= {abc.Cost}";
+                }
             }
 
-            LogUnknownRequirement(logger, requirement, string.Join(", ", boolVariables.Keys));
+            list.Add(new Requirement
+            {
+                HasRequirement = fCost,
+                LogMessage = sCost
+            });
+        }
+    }
+
+    private static Func<int> PowerTypeDelegate(PlayerReader playerReader, PowerType type)
+    => type switch
+    {
+        PowerType.Mana => playerReader.ManaCurrent,
+        PowerType.Rage or
+        PowerType.Energy or
+        PowerType.RunicPower => playerReader.PTCurrent,
+        PowerType.RuneBlood => playerReader.BloodRune,
+        PowerType.RuneFrost => playerReader.FrostRune,
+        PowerType.RuneUnholy => playerReader.UnholyRune,
+        PowerType.HealthCost => playerReader.HealthCurrent,
+        //PowerType.ComboPoints => playerReader.ComboPoints,
+        _ => throw new NotImplementedException($"{type.ToStringF()}"),
+    };
+
+    private void AddMinComboPoints(List<Requirement> list, KeyAction item,
+        PlayerReader playerReader)
+    {
+        if (item.MinComboPoints <= 0)
+            return;
+
+        bool f() => playerReader.ComboPoints() >= item.MinComboPoints;
+        string s()
+            => $"Combo point {playerReader.ComboPoints()} >= {item.MinComboPoints}";
+        list.Add(new Requirement
+        {
+            HasRequirement = f,
+            LogMessage = s
+        });
+    }
+
+    private static void AddKeyActionCooldown(List<Requirement> list, KeyAction item)
+    {
+        if (item.Cooldown <= 0)
+            return;
+
+        bool f() => item.GetRemainingCooldown() == 0;
+        string s() => $"Cooldown {item.GetRemainingCooldown() / 1000:F1}";
+        list.Add(new Requirement
+        {
+            HasRequirement = f,
+            LogMessage = s
+        });
+    }
+
+    private static void AddCharge(List<Requirement> list, KeyAction item)
+    {
+        if (item.BaseAction || item.Charge < 1)
+            return;
+
+        bool f() => item.GetChargeRemaining() != 0;
+        string s() => $"Charge {item.GetChargeRemaining()}";
+        list.Add(new Requirement
+        {
+            HasRequirement = f,
+            LogMessage = s
+        });
+    }
+
+    private static void AddConsumable(KeyAction item)
+    {
+        item.BeforeCastStop = true;
+        item.WhenUsable = true;
+
+        item.Requirements.Add($"{SymbolNegate}{item.Name}");
+        item.Requirements.Add($"{SymbolNegate}{Swimming}");
+        item.Requirements.Add($"{SymbolNegate}{Falling}");
+    }
+
+    private void AddSpellSchool(List<Requirement> list, KeyAction item,
+        PlayerReader playerReader, FrozenDictionary<int, SchoolMask> npcSchoolImmunity)
+    {
+        if (item.School == SchoolMask.None)
+            return;
+
+        bool f() =>
+            !npcSchoolImmunity.TryGetValue(playerReader.TargetId,
+                out SchoolMask immuneAgaints) ||
+                !immuneAgaints.HasValue(item.School);
+
+        string s() => item.School.ToStringF();
+        list.Add(new Requirement
+        {
+            HasRequirement = f,
+            LogMessage = s
+        });
+    }
+
+
+    public Requirement CreateRequirement(string requirement)
+    {
+        string? negated = negateKeywords.FirstOrDefault(requirement.StartsWith);
+        if (!string.IsNullOrEmpty(negated))
+        {
+            requirement = requirement[negated.Length..];
+        }
+
+        string? key = requirementMap.Keys.FirstOrDefault(requirement.Contains);
+        if (!string.IsNullOrEmpty(key))
+        {
+            Requirement r = requirementMap[key](requirement);
+            if (negated != null)
+            {
+                r.Negate(negated);
+            }
+            return r;
+        }
+
+        if (!boolVariables.TryGetValue(requirement, out Func<bool>? value))
+        {
+            LogUnknown(logger, requirement, string.Join(", ", boolVariables.Keys));
             return new Requirement
             {
                 LogMessage = () => $"UNKNOWN REQUIREMENT! {requirement}"
             };
         }
 
-        private Requirement CreateActionUsableRequirement(KeyAction item, PlayerReader playerReader, ActionBarBits usableAction)
+        string s() => requirement;
+        Requirement req = new()
         {
-            bool CanDoFormChangeMinMana()
-            {
-                return playerReader.ManaCurrent() >= item.FormCost() + item.MinMana;
-            }
+            HasRequirement = value,
+            LogMessage = s
+        };
 
-            bool f() =>
-                    !item.HasFormRequirement ? usableAction.Is(item) :
-                    (playerReader.Form == item.FormEnum && usableAction.Is(item)) ||
-                    (playerReader.Form != item.FormEnum && CanDoFormChangeMinMana());
+        if (negated != null)
+        {
+            req.Negate(negated);
+        }
+        return req;
+    }
 
-            string s() =>
-                    !item.HasFormRequirement ? "Usable" :
-                    (playerReader.Form != item.FormEnum && CanDoFormChangeMinMana()) ? "Usable after Form change" :
-                    (playerReader.Form == item.FormEnum && usableAction.Is(item)) ? "Usable current Form" : "not Usable current Form";
+    private Requirement CreateActionUsable(KeyAction item,
+        PlayerReader playerReader, FormKeyActions forms,
+        ActionBarCostReader costReader,
+        ActionBarBits<IUsableAction> usableAction)
+    {
+        bool CanDoFormChange()
+        {
+            if (!forms.Get(item.FormValue, out KeyAction? formKeyAction))
+                return true;
 
-            return new Requirement
-            {
-                HasRequirement = f,
-                LogMessage = s
-            };
+            ActionBarCost abc = costReader.Get(formKeyAction!);
+            Func<int> powerTypeCurrent = PowerTypeDelegate(playerReader, abc.PowerType);
+
+            return powerTypeCurrent() >= abc.Cost;
         }
 
-        private Requirement CreateActionNotInGameCooldown(KeyAction item)
+        bool f() =>
+            !item.HasForm
+            ? usableAction.Is(item)
+            : (playerReader.Form == item.FormValue && usableAction.Is(item)) ||
+            (playerReader.Form != item.FormValue && CanDoFormChange());
+
+        string s() =>
+            !item.HasForm
+            ? "Usable"
+            : (playerReader.Form != item.FormValue && CanDoFormChange())
+            ? $"May Usable {item.FormValue.ToStringF()}"
+            : (playerReader.Form == item.FormValue && usableAction.Is(item))
+            ? $"Usable in Form" : "Unusable";
+
+        return new Requirement
         {
-            string key = $"CD_{item.Name}";
-            bool f() => UsableGCD(key);
-            string s() => $"CD {intVariables[key]() / 1000f:F1}";
+            HasRequirement = f,
+            LogMessage = s
+        };
+    }
 
-            return new Requirement
-            {
-                HasRequirement = f,
-                VisibleIfHasRequirement = false,
-                LogMessage = s
-            };
-        }
+    private Requirement CreateActionCurrent(KeyAction item,
+        ActionBarBits<ICurrentAction> currentAction)
+    {
+        bool f() => !currentAction.Is(item);
+        static string s() => $"{SymbolNegate}Current";
 
-        private bool UsableGCD(string key)
+        return new Requirement
         {
-            return intVariables[key]() <= CastingHandler.SPELL_QUEUE - playerReader.NetworkLatency.Value;
-        }
+            HasRequirement = f,
+            LogMessage = s
+        };
+    }
 
-        private Requirement CreateTargetCastingSpell(string requirement)
+    private void AddGameCooldown(List<Requirement> list,
+        KeyAction item, PlayerReader playerReader,
+        Dictionary<string, Func<int>> intVariables)
+    {
+        string key = $"CD_{item.Name}";
+        bool f() => UsableGCD(key, playerReader, intVariables);
+        string s() => $"CD {intVariables[key]() / 1000f:F1}";
+
+        list.Add(new Requirement
         {
-            if (requirement.Contains(':'))
-            {
-                string[] parts = requirement.Split(":");
-                string[] spellsPart = parts[1].Split("|");
-                int[] spellIds = spellsPart.Select(x => int.Parse(x.Trim())).ToArray();
+            HasRequirement = f,
+            LogMessage = s
+        });
+    }
 
-                var spellIdsStringFormatted = string.Join(", ", spellIds);
+    private static bool UsableGCD(string key, PlayerReader playerReader,
+        Dictionary<string, Func<int>> intVariables)
+    {
+        return intVariables[key]() <=
+            Max(0, playerReader.SpellQueueTimeMs - playerReader.NetworkLatency);
+    }
 
-                bool f() => spellIds.Contains(playerReader.SpellBeingCastByTarget);
-                string s() => $"Target casting {playerReader.SpellBeingCastByTarget} ∈ [{spellIdsStringFormatted}]";
-                return new Requirement
-                {
-                    HasRequirement = f,
-                    LogMessage = s
-                };
-            }
-            else
+    private Requirement CreateTargetCastingSpell(string requirement)
+    {
+        return create(requirement, playerReader);
+        static Requirement create(string requirement, PlayerReader playerReader)
+        {
+            ReadOnlySpan<char> span = requirement;
+            int sep1 = span.IndexOf(SEP1);
+            // 'TargetCastingSpell'
+            if (sep1 == -1)
             {
-                string s() => "Target casting";
                 return new Requirement
                 {
                     HasRequirement = playerReader.IsTargetCasting,
-                    LogMessage = s
+                    LogMessage = () => "Target casting"
                 };
             }
-        }
 
-        private Requirement CreateForm(string requirement)
+            // 'TargetCastingSpell:_1_?,_n_'
+            string[] spellsPart = span[(sep1 + 1)..].ToString().Split(SEP2);
+            int[] spellIds = spellsPart.Select(int.Parse).ToArray();
+
+            bool f() => spellIds.Contains(playerReader.SpellBeingCastByTarget);
+            string s() => $"Target casts {playerReader.SpellBeingCastByTarget} ∈ [{string.Join(SEP2, spellIds)}]";
+            return new Requirement
+            {
+                HasRequirement = f,
+                LogMessage = s
+            };
+        }
+    }
+
+    private Requirement CreateForm(string requirement)
+    {
+        return create(requirement, playerReader);
+        static Requirement create(string requirement, PlayerReader playerReader)
         {
-            string[] parts = requirement.Split(":");
-            Form form = Enum.Parse<Form>(parts[1]);
+            // 'Form:_FORM_'
+            ReadOnlySpan<char> span = requirement;
+            int sep = span.IndexOf(SEP1);
+            Form form = Enum.Parse<Form>(span[(sep + 1)..]);
 
             bool f() => playerReader.Form == form;
-            string s() => $"{playerReader.Form}";
+            string s() => playerReader.Form.ToStringF();
 
             return new Requirement
             {
@@ -785,11 +831,17 @@ namespace Core
                 LogMessage = s
             };
         }
+    }
 
-        private Requirement CreateRace(string requirement)
+    private Requirement CreateRace(string requirement)
+    {
+        return create(requirement, playerReader);
+        static Requirement create(string requirement, PlayerReader playerReader)
         {
-            string[] parts = requirement.Split(":");
-            UnitRace race = Enum.Parse<UnitRace>(parts[1]);
+            // 'Race:_RACE_'
+            ReadOnlySpan<char> span = requirement;
+            int sep = span.IndexOf(SEP1);
+            UnitRace race = Enum.Parse<UnitRace>(span[(sep + 1)..]);
 
             bool f() => playerReader.Race == race;
             string s() => playerReader.Race.ToStringF();
@@ -800,13 +852,21 @@ namespace Core
                 LogMessage = s
             };
         }
+    }
 
-        private Requirement CreateSpell(string requirement)
+    private Requirement CreateSpell(string requirement)
+    {
+        return create(requirement, spellBookReader);
+        static Requirement create(string requirement, SpellBookReader spellBookReader)
         {
-            string[] parts = requirement.Split(":");
-            string name = parts[1].Trim();
+            // 'Spell:_NAME_OR_ID_'
+            ReadOnlySpan<char> span = requirement;
+            int sep = span.IndexOf(SEP1);
+            string name = span[(sep + 1)..].Trim().ToString();
 
-            if (int.TryParse(name, out int id) && spellBookReader.TryGetValue(id, out Spell spell))
+            int id;
+            if (int.TryParse(name, out id) &&
+                spellBookReader.TryGetValue(id, out Spell spell))
             {
                 name = $"{spell.Name}({id})";
             }
@@ -824,12 +884,30 @@ namespace Core
                 LogMessage = s
             };
         }
+    }
 
-        private Requirement CreateTalent(string requirement)
+    private Requirement CreateTalent(string requirement)
+    {
+        return create(requirement, talentReader);
+        static Requirement create(string requirement, TalentReader talentReader)
         {
-            string[] parts = requirement.Split(":");
-            string name = parts[1].Trim();
-            int rank = parts.Length < 3 ? 1 : int.Parse(parts[2]);
+            // 'Talent:_NAME_?:_RANK_'
+            ReadOnlySpan<char> span = requirement;
+
+            int firstSep = span.IndexOf(SEP1);
+            int lastSep = span.LastIndexOf(SEP1);
+
+            int rank = 1;
+            if (firstSep != lastSep)
+            {
+                rank = int.Parse(span[(lastSep + 1)..]);
+            }
+            else
+            {
+                lastSep = span.Length;
+            }
+
+            string name = span[(firstSep + 1)..lastSep].ToString();
 
             bool f() => talentReader.HasTalent(name, rank);
             string s() => rank == 1 ? $"Talent {name}" : $"Talent {name} (Rank {rank})";
@@ -840,13 +918,29 @@ namespace Core
                 LogMessage = s
             };
         }
+    }
 
-        private Requirement CreateTrigger(string requirement)
+    private Requirement CreateTrigger(string requirement)
+    {
+        return create(requirement, playerReader);
+        static Requirement create(string requirement, PlayerReader playerReader)
         {
-            var parts = requirement.Split(":");
-            int bitNum = int.Parse(parts[1]);
-            string text = parts.Length > 2 ? parts[2] : string.Empty;
+            // 'Trigger:_BIT_NUM_?:_TEXT_'
+            ReadOnlySpan<char> span = requirement;
+            int firstSep = span.IndexOf(SEP1);
+            int lastSep = span.LastIndexOf(SEP1);
 
+            string text = string.Empty;
+            if (firstSep != lastSep)
+            {
+                text = span[(lastSep + 1)..].ToString();
+            }
+            else
+            {
+                lastSep = span.Length;
+            }
+
+            int bitNum = int.Parse(span[(firstSep + 1)..lastSep]);
             int bitMask = Mask.M[bitNum];
 
             bool f() => playerReader.CustomTrigger1[bitMask];
@@ -858,21 +952,28 @@ namespace Core
                 LogMessage = s
             };
         }
+    }
 
-        private Requirement CreateNpcId(string requirement)
+    private Requirement CreateNpcId(string requirement)
+    {
+        return create(requirement, playerReader, intVariables, creatureDb);
+        static Requirement create(string requirement, PlayerReader playerReader,
+            Dictionary<string, Func<int>> intVariables, CreatureDB creatureDb)
         {
-            string[] parts = requirement.Split(":");
+            // 'npcID:_INTVARIABLE_OR_ID_'
+            ReadOnlySpan<char> span = requirement;
+            int sep = span.IndexOf(SEP1);
+            ReadOnlySpan<char> name_or_id = span[(sep + 1)..];
 
             int npcId;
-            if (intVariables.TryGetValue(parts[1], out Func<int>? value))
+            if (intVariables.TryGetValue(name_or_id.ToString(), out Func<int>? value))
                 npcId = value();
             else
-                npcId = int.Parse(parts[1]);
+                npcId = int.Parse(name_or_id);
 
-            string npcName = string.Empty;
-            if (creatureDb.Entries.TryGetValue(npcId, out Creature creature))
+            if (!creatureDb.Entries.TryGetValue(npcId, out string? npcName))
             {
-                npcName = creature.Name;
+                npcName = string.Empty;
             }
 
             bool f() => playerReader.TargetId == npcId;
@@ -884,18 +985,37 @@ namespace Core
                 LogMessage = s
             };
         }
+    }
 
-        private Requirement CreateBagItem(string requirement)
+    private Requirement CreateBagItem(string requirement)
+    {
+        return create(requirement, bagReader, intVariables, itemDb);
+        static Requirement create(string requirement, BagReader bagReader,
+            Dictionary<string, Func<int>> intVariables, ItemDB itemDb)
         {
-            string[] parts = requirement.Split(":");
+            // 'BagItem:_INTVARIABLE_OR_ID_?:_COUNT_'
+            ReadOnlySpan<char> span = requirement;
+
+            int firstSep = span.IndexOf(SEP1);
+            int lastSep = span.LastIndexOf(SEP1);
+
+            int count = 1;
+            if (firstSep != lastSep)
+            {
+                count = int.Parse(span[(lastSep + 1)..]);
+            }
+            else
+            {
+                lastSep = span.Length;
+            }
+
+            ReadOnlySpan<char> name_or_id = span[(firstSep + 1)..lastSep];
 
             int itemId;
-            if (intVariables.TryGetValue(parts[1], out Func<int>? value))
+            if (intVariables.TryGetValue(name_or_id.ToString(), out Func<int>? value))
                 itemId = value();
             else
-                itemId = int.Parse(parts[1]);
-
-            int count = parts.Length < 3 ? 1 : int.Parse(parts[2]);
+                itemId = int.Parse(name_or_id);
 
             string itemName = string.Empty;
             if (itemDb.Items.TryGetValue(itemId, out Item item))
@@ -912,14 +1032,20 @@ namespace Core
                 LogMessage = s
             };
         }
+    }
 
-        private Requirement CreateSpellInRange(string requirement)
+    private Requirement CreateSpellInRange(string requirement)
+    {
+        return create(requirement, playerReader.SpellInRange);
+        static Requirement create(string requirement, SpellInRange range)
         {
-            string[] parts = requirement.Split(":");
-            int bitNum = int.Parse(parts[1]);
+            // 'SpellInRange:_BIT_NUM_'
+            ReadOnlySpan<char> span = requirement;
+            int sep = span.IndexOf(SEP1);
+            int bitNum = int.Parse(span[(sep + 1)..]);
             int bitMask = Mask.M[bitNum];
 
-            bool f() => playerReader.SpellInRange[bitMask];
+            bool f() => range[bitMask];
             string s() => $"SpellInRange {bitNum}";
 
             return new Requirement
@@ -928,152 +1054,151 @@ namespace Core
                 LogMessage = s
             };
         }
+    }
 
-        private Requirement CreateUsable(string requirement)
+    private Requirement CreateUsable(string requirement)
+    {
+        // 'Usable:_KeyAction_Name_'
+        ReadOnlySpan<char> span = requirement;
+        int sep = span.IndexOf(SEP1);
+        ReadOnlySpan<char> name = span[(sep + 1)..].Trim();
+
+        List<(string _, KeyActions)> groups = classConfig.GetByType<KeyActions>();
+
+        foreach ((string _, KeyActions keyActions) in groups)
         {
-            string[] parts = requirement.Split(":");
-            string name = parts[1].Trim();
-
-            KeyAction keyAction = keyActions.First(x => x.Name == name);
-            return CreateActionUsableRequirement(keyAction, playerReader, addonReader.UsableAction);
-        }
-
-
-        private Requirement CreateGreaterThen(string requirement)
-        {
-            return CreateArithmeticRequirement(">", requirement, intVariables);
-        }
-
-        private Requirement CreateLesserThen(string requirement)
-        {
-            return CreateArithmeticRequirement("<", requirement, intVariables);
-        }
-
-        private Requirement CreateGreaterOrEquals(string requirement)
-        {
-            return CreateArithmeticRequirement(">=", requirement, intVariables);
-        }
-
-        private Requirement CreateLesserOrEquals(string requirement)
-        {
-            return CreateArithmeticRequirement("<=", requirement, intVariables);
-        }
-
-        private Requirement CreateEquals(string requirement)
-        {
-            return CreateArithmeticRequirement("==", requirement, intVariables);
-        }
-
-        private Requirement CreateArithmeticRequirement(string symbol, string requirement, Dictionary<string, Func<int>> intVariables)
-        {
-            var parts = requirement.Split(symbol);
-            var key = parts[0].Trim();
-
-            if (!intVariables.ContainsKey(key))
+            foreach (KeyAction keyAction in keyActions.Sequence)
             {
-                LogUnknownRequirement(logger, requirement, string.Join(", ", intVariables.Keys));
-                return new Requirement
+                if (name.SequenceEqual(keyAction.Name))
                 {
-                    LogMessage = () => $"UNKNOWN REQUIREMENT! {requirement}"
-                };
-            }
-
-            string display = key;
-
-            Func<int> alias = intVariables[key];
-            string aliasKey = alias().ToString();
-            if (intVariables.ContainsKey(aliasKey))
-            {
-                key = aliasKey;
-            }
-
-            int zero() => 0;
-            Func<int> value = zero;
-            if (int.TryParse(parts[1], out int v))
-            {
-                int c() => v;
-                value = c;
-            }
-            else
-            {
-                string variable = parts[1].Trim();
-                if (intVariables.ContainsKey(variable))
-                {
-                    value = intVariables[variable];
+                    return CreateActionUsable(keyAction, playerReader,
+                        classConfig.Form, costReader, usableAction);
                 }
             }
-
-            switch (symbol)
-            {
-                case "==":
-                    bool e() => intVariables[key]() == value();
-                    string es() => $"{display} {intVariables[key]()} {symbol} {value()}";
-                    return new Requirement
-                    {
-                        HasRequirement = e,
-                        LogMessage = es
-                    };
-                case ">":
-                    bool g() => intVariables[key]() > value();
-                    string gs() => $"{display} {intVariables[key]()} {symbol} {value()}";
-                    return new Requirement
-                    {
-                        HasRequirement = g,
-                        LogMessage = gs
-                    };
-                case "<":
-                    bool l() => intVariables[key]() < value();
-                    string ls() => $"{display} {intVariables[key]()} {symbol} {value()}";
-                    return new Requirement
-                    {
-                        HasRequirement = l,
-                        LogMessage = ls
-                    };
-                case ">=":
-                    bool ge() => intVariables[key]() >= value();
-                    string ges() => $"{display} {intVariables[key]()} {symbol} {value()}";
-                    return new Requirement
-                    {
-                        HasRequirement = ge,
-                        LogMessage = ges
-                    };
-                case "<=":
-                    bool le() => intVariables[key]() <= value();
-                    string les() => $"{display} {intVariables[key]()} {symbol} {value()}";
-                    return new Requirement
-                    {
-                        HasRequirement = le,
-                        LogMessage = les
-                    };
-
-                default:
-                    return new Requirement
-                    {
-                        LogMessage = () => $"UNKNOWN ARITHMETIC REQUIREMENT! {key} {intVariables[key]()} ? {value()}"
-                    };
-            };
         }
 
-        #region Logging
-
-        [LoggerMessage(
-            EventId = 11,
-            Level = LogLevel.Information,
-            Message = "[{typeName}] Defined int variable [{key} -> {value}]")]
-        static partial void LogUserDefinedValue(ILogger logger, string typeName, string key, int value);
-
-        [LoggerMessage(
-            EventId = 12,
-            Level = LogLevel.Information,
-            Message = "[{name}] Requirement: \"{requirement}\"")]
-        static partial void LogProcessingRequirement(ILogger logger, string name, string requirement);
-
-        [LoggerMessage(
-            EventId = 13,
-            Level = LogLevel.Error,
-            Message = "UNKNOWN REQUIREMENT! {requirement}: try one of: {available}")]
-        static partial void LogUnknownRequirement(ILogger logger, string requirement, string available);
-
-        #endregion
+        throw new InvalidOperationException($"'{requirement}' " +
+            $"related named '{name}' {nameof(KeyAction)} not found!");
     }
+
+    private Requirement CreateGreaterThen(string requirement)
+    {
+        return CreateArithmetic(greaterThen, requirement, intVariables);
+    }
+
+    private Requirement CreateLesserThen(string requirement)
+    {
+        return CreateArithmetic(lessThen, requirement, intVariables);
+    }
+
+    private Requirement CreateGreaterOrEquals(string requirement)
+    {
+        return CreateArithmetic(greaterThenOrEqual, requirement, intVariables);
+    }
+
+    private Requirement CreateLesserOrEquals(string requirement)
+    {
+        return CreateArithmetic(lessThenOrEqual, requirement, intVariables);
+    }
+
+    private Requirement CreateEquals(string requirement)
+    {
+        return CreateArithmetic(equals, requirement, intVariables);
+    }
+
+    private Requirement CreateModulo(string requirement)
+    {
+        return CreateArithmetic(modulo, requirement, intVariables);
+    }
+
+    private Requirement CreateArithmetic(string symbol, string requirement,
+        Dictionary<string, Func<int>> intVariables)
+    {
+        ReadOnlySpan<char> span = requirement;
+        int sep = span.IndexOf(symbol);
+
+        string key = span[..sep].Trim().ToString();
+        ReadOnlySpan<char> varOrConst = span[(sep + symbol.Length)..];
+
+        if (!intVariables.TryGetValue(key, out Func<int>? aliasOrKey))
+        {
+            LogUnknown(logger, requirement, string.Join(", ", intVariables.Keys));
+            throw new ArgumentOutOfRangeException(requirement);
+        }
+
+        string display = key;
+
+        string aliasKey = aliasOrKey().ToString();
+        if (intVariables.ContainsKey(aliasKey))
+        {
+            key = aliasKey;
+        }
+
+        Func<int> lValue = intVariables[key];
+
+        string varOrConstName = "";
+        Func<int> rValue;
+        if (int.TryParse(varOrConst, out int constValue))
+        {
+            int _constValue() => constValue;
+            rValue = _constValue;
+        }
+        else
+        {
+            varOrConstName = varOrConst.Trim().ToString();
+            rValue = intVariables.TryGetValue(varOrConstName, out Func<int>? v)
+                ? v
+                : throw new ArgumentOutOfRangeException(varOrConstName);
+        }
+
+        if (!string.IsNullOrEmpty(varOrConstName))
+            varOrConstName += " ";
+
+        string msg() => $"{display} {lValue()} {symbol} {varOrConstName}{rValue()}";
+        switch (symbol)
+        {
+            case modulo:
+                bool m() => lValue() % rValue() == 0;
+                return new Requirement { HasRequirement = m, LogMessage = msg };
+            case equals:
+                bool e() => lValue() == rValue();
+                return new Requirement { HasRequirement = e, LogMessage = msg };
+            case greaterThen:
+                bool g() => lValue() > rValue();
+                return new Requirement { HasRequirement = g, LogMessage = msg };
+            case lessThen:
+                bool l() => lValue() < rValue();
+                return new Requirement { HasRequirement = l, LogMessage = msg };
+            case greaterThenOrEqual:
+                bool ge() => lValue() >= rValue();
+                return new Requirement { HasRequirement = ge, LogMessage = msg };
+            case lessThenOrEqual:
+                bool le() => lValue() <= rValue();
+                return new Requirement { HasRequirement = le, LogMessage = msg };
+            default:
+                throw new ArgumentOutOfRangeException(requirement);
+        };
+    }
+
+    #region Logging
+
+    [LoggerMessage(
+        EventId = 0017,
+        Level = LogLevel.Information,
+        Message = "[{typeName}] Defined int variable [{key} -> {value}]")]
+    static partial void LogUserDefinedValue(ILogger logger, string typeName, string key, int value);
+
+    [LoggerMessage(
+        EventId = 0018,
+        Level = LogLevel.Information,
+        Message = "[{name,-15}] Requirement: \"{requirement}\"")]
+    static partial void LogProcessing(ILogger logger, string name, string requirement);
+
+    [LoggerMessage(
+        EventId = 0019,
+        Level = LogLevel.Error,
+        Message = "UNKNOWN REQUIREMENT! {requirement}: try one of: {available}")]
+    static partial void LogUnknown(ILogger logger, string requirement, string available);
+
+    #endregion
 }

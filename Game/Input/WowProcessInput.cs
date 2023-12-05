@@ -1,218 +1,222 @@
 ﻿using Microsoft.Extensions.Logging;
 
+using SixLabors.ImageSharp;
+
 using System;
-using System.Collections.Generic;
-using System.Drawing;
+using System.Collections;
 using System.Threading;
 
 using WinAPI;
 
 #pragma warning disable 162
 
-namespace Game
+namespace Game;
+
+public sealed partial class WowProcessInput : IMouseInput
 {
-    public sealed partial class WowProcessInput : IMouseInput
+    private const bool LogInput = false;
+    private const bool LogMove = false;
+
+    private readonly ILogger<WowProcessInput> logger;
+
+    private readonly WowProcess process;
+    private readonly InputWindowsNative nativeInput;
+    private readonly InputSimulator simulatorInput;
+
+    private readonly BitArray keysDown;
+
+    public ConsoleKey ForwardKey { get; set; }
+    public ConsoleKey BackwardKey { get; set; }
+    public ConsoleKey TurnLeftKey { get; set; }
+    public ConsoleKey TurnRightKey { get; set; }
+    public ConsoleKey InteractMouseover { get; set; }
+    public int InteractMouseoverPress { get; set; }
+
+    public WowProcessInput(ILogger<WowProcessInput> logger, CancellationTokenSource cts, WowProcess process)
     {
-        private const bool LogInput = false;
-        private const bool LogMove = false;
+        this.logger = logger;
+        this.process = process;
 
-        private const int MIN_DELAY = 25;
-        private const int MAX_DELAY = 55;
+        keysDown = new((int)ConsoleKey.OemClear);
 
-        private readonly ILogger logger;
-
-        private readonly WowProcess wowProcess;
-        private readonly InputWindowsNative nativeInput;
-        private readonly IInput simulatorInput;
-
-        private readonly Dictionary<ConsoleKey, bool> keyDownDict = new();
-
-        public ConsoleKey ForwardKey { get; set; }
-        public ConsoleKey BackwardKey { get; set; }
-        public ConsoleKey TurnLeftKey { get; set; }
-        public ConsoleKey TurnRightKey { get; set; }
-        public ConsoleKey InteractMouseover { get; set; }
-        public int InteractMouseoverPress { get; set; } = 10;
-
-        public WowProcessInput(ILogger logger, CancellationTokenSource cts, WowProcess wowProcess)
-        {
-            this.logger = logger;
-            this.wowProcess = wowProcess;
-
-            nativeInput = new InputWindowsNative(wowProcess, cts, MIN_DELAY, MAX_DELAY);
-            simulatorInput = new InputSimulator(wowProcess, cts, MIN_DELAY, MAX_DELAY);
-        }
-
-        public void Reset()
-        {
-            lock (keyDownDict)
-            {
-                foreach (KeyValuePair<ConsoleKey, bool> kvp in keyDownDict)
-                {
-                    keyDownDict[kvp.Key] = false;
-                }
-            }
-        }
-
-        public void KeyDown(ConsoleKey key, bool forced)
-        {
-            if (IsKeyDown(key))
-            {
-                if (!forced)
-                    return;
-            }
-
-            if (LogInput)
-            {
-                if (key == ForwardKey || key == BackwardKey || key == TurnLeftKey || key == TurnRightKey)
-                {
-                    if (LogMove)
-                        LogKeyDown(logger, key);
-                }
-                else
-                {
-                    LogKeyDown(logger, key);
-                }
-            }
-
-            keyDownDict[key] = true;
-            nativeInput.KeyDown((int)key);
-        }
-
-        public void KeyUp(ConsoleKey key, bool forced)
-        {
-            if (!IsKeyDown(key))
-            {
-                if (!forced)
-                    return;
-            }
-
-            if (LogInput)
-            {
-                if (key == ForwardKey || key == BackwardKey || key == TurnLeftKey || key == TurnRightKey)
-                {
-                    if (LogMove)
-                        LogKeyUp(logger, key);
-                }
-                else
-                {
-                    LogKeyUp(logger, key);
-                }
-            }
-
-            nativeInput.KeyUp((int)key);
-            keyDownDict[key] = false;
-        }
-
-        public bool IsKeyDown(ConsoleKey key)
-        {
-            return keyDownDict.TryGetValue(key, out bool down) && down;
-        }
-
-        public void SendText(string payload)
-        {
-            simulatorInput.SendText(payload);
-        }
-
-        public void SetClipboard(string text)
-        {
-            simulatorInput.SetClipboard(text);
-        }
-
-        public void PasteFromClipboard()
-        {
-            simulatorInput.PasteFromClipboard();
-        }
-
-        public void SetForegroundWindow()
-        {
-            NativeMethods.SetForegroundWindow(wowProcess.Process.MainWindowHandle);
-        }
-
-        public int KeyPress(ConsoleKey key, int milliseconds)
-        {
-            keyDownDict[key] = true;
-            int totalElapsedMs = nativeInput.KeyPress((int)key, milliseconds);
-            keyDownDict[key] = false;
-
-            if (LogInput)
-            {
-                LogKeyPress(logger, key, totalElapsedMs);
-            }
-
-            return totalElapsedMs;
-        }
-
-        public void KeyPressSleep(ConsoleKey key, int milliseconds, CancellationToken ct)
-        {
-            if (milliseconds < 1)
-                return;
-
-            if (LogInput)
-            {
-                if (key == ForwardKey || key == BackwardKey || key == TurnLeftKey || key == TurnRightKey)
-                {
-                    if (LogMove)
-                        LogKeyPress(logger, key, milliseconds);
-                }
-                else
-                {
-                    LogKeyPress(logger, key, milliseconds);
-                }
-            }
-
-            keyDownDict[key] = true;
-            nativeInput.KeyPressSleep((int)key, milliseconds, ct);
-            keyDownDict[key] = false;
-        }
-
-        public void SetKeyState(ConsoleKey key, bool pressDown, bool forced = false)
-        {
-            if (pressDown) { KeyDown(key, forced); } else { KeyUp(key, forced); }
-        }
-
-        public void SetCursorPosition(Point p)
-        {
-            nativeInput.SetCursorPosition(p);
-        }
-
-        public void RightClickMouse(Point p)
-        {
-            nativeInput.RightClickMouse(p);
-        }
-
-        public void LeftClickMouse(Point p)
-        {
-            nativeInput.LeftClickMouse(p);
-        }
-
-        public void InteractMouseOver(CancellationToken ct)
-        {
-            KeyPressSleep(InteractMouseover, InteractMouseoverPress, ct);
-        }
-
-        [LoggerMessage(
-            EventId = 25,
-            Level = LogLevel.Debug,
-            Message = @"Input: KeyDown {key}")]
-        static partial void LogKeyDown(ILogger logger, ConsoleKey key);
-
-        [LoggerMessage(
-            EventId = 26,
-            Level = LogLevel.Debug,
-            Message = @"Input: KeyUp {key}")]
-        static partial void LogKeyUp(ILogger logger, ConsoleKey key);
-
-        [LoggerMessage(
-            EventId = 27,
-            Level = LogLevel.Debug,
-            Message = @"Input: [{key}] pressed for {milliseconds}ms")]
-        static partial void LogKeyPress(ILogger logger, ConsoleKey key, int milliseconds);
-
-        [LoggerMessage(
-            EventId = 28,
-            Level = LogLevel.Debug,
-            Message = @"Input: [{key}] pressing for {milliseconds}ms")]
-        static partial void LogKeyPressNoDelay(ILogger logger, ConsoleKey key, int milliseconds);
+        nativeInput = new(process, cts, InputDuration.FastPress);
+        simulatorInput = new(process, cts, InputDuration.FastPress);
     }
+
+    public void Reset()
+    {
+        lock (keysDown)
+        {
+            keysDown.SetAll(false);
+        }
+    }
+
+    public void KeyDown(ConsoleKey key, bool forced)
+    {
+        if (IsKeyDown(key))
+        {
+            if (!forced)
+                return;
+        }
+
+        if (LogInput)
+        {
+            if (key == ForwardKey || key == BackwardKey || key == TurnLeftKey || key == TurnRightKey)
+            {
+                if (LogMove)
+                    LogKeyDown(logger, key);
+            }
+            else
+            {
+                LogKeyDown(logger, key);
+            }
+        }
+
+        keysDown[(int)key] = true;
+        nativeInput.KeyDown((int)key);
+    }
+
+    public void KeyUp(ConsoleKey key, bool forced)
+    {
+        if (!IsKeyDown(key))
+        {
+            if (!forced)
+                return;
+        }
+
+        if (LogInput)
+        {
+            if (key == ForwardKey || key == BackwardKey || key == TurnLeftKey || key == TurnRightKey)
+            {
+                if (LogMove)
+                    LogKeyUp(logger, key);
+            }
+            else
+            {
+                LogKeyUp(logger, key);
+            }
+        }
+
+        nativeInput.KeyUp((int)key);
+        keysDown[(int)key] = false;
+    }
+
+    public bool IsKeyDown(ConsoleKey key)
+    {
+        return keysDown[(int)key];
+    }
+
+    public void SendText(string payload)
+    {
+        simulatorInput.SendText(payload);
+    }
+
+    public void SetClipboard(string text)
+    {
+        simulatorInput.SetClipboard(text);
+    }
+
+    public void PasteFromClipboard()
+    {
+        simulatorInput.PasteFromClipboard();
+    }
+
+    public void SetForegroundWindow()
+    {
+        NativeMethods.SetForegroundWindow(process.MainWindowHandle);
+    }
+
+    public int PressRandom(ConsoleKey key, int milliseconds)
+    {
+        return PressRandom(key, milliseconds, CancellationToken.None);
+    }
+
+    public int PressRandom(ConsoleKey key, int milliseconds, CancellationToken token)
+    {
+        keysDown[(int)key] = true;
+        int elapsedMs = nativeInput.PressRandom((int)key, milliseconds, token);
+        keysDown[(int)key] = false;
+
+        if (LogInput)
+        {
+            LogKeyPress(logger, key, elapsedMs);
+        }
+
+        return elapsedMs;
+    }
+
+    public void PressFixed(ConsoleKey key, int milliseconds, CancellationToken token)
+    {
+        if (milliseconds < 1)
+            return;
+
+        if (LogInput)
+        {
+            if (key == ForwardKey || key == BackwardKey || key == TurnLeftKey || key == TurnRightKey)
+            {
+                if (LogMove)
+                    LogKeyPress(logger, key, milliseconds);
+            }
+            else
+            {
+                LogKeyPress(logger, key, milliseconds);
+            }
+        }
+
+        keysDown[(int)key] = true;
+        nativeInput.PressFixed((int)key, milliseconds, token);
+        keysDown[(int)key] = false;
+    }
+
+    public void SetKeyState(ConsoleKey key, bool pressDown, bool forced)
+    {
+        if (pressDown)
+            KeyDown(key, forced);
+        else
+            KeyUp(key, forced);
+    }
+
+    public void SetCursorPos(Point p)
+    {
+        nativeInput.SetCursorPos(p);
+    }
+
+    public void RightClick(Point p)
+    {
+        nativeInput.RightClick(p);
+    }
+
+    public void LeftClick(Point p)
+    {
+        nativeInput.LeftClick(p);
+    }
+
+    public void InteractMouseOver(CancellationToken token)
+    {
+        PressFixed(InteractMouseover, InteractMouseoverPress, token);
+    }
+
+    [LoggerMessage(
+        EventId = 3000,
+        Level = LogLevel.Debug,
+        Message = @"[{key}] KeyDown")]
+    static partial void LogKeyDown(ILogger logger, ConsoleKey key);
+
+    [LoggerMessage(
+        EventId = 3001,
+        Level = LogLevel.Debug,
+        Message = @"[{key}] KeyUp")]
+    static partial void LogKeyUp(ILogger logger, ConsoleKey key);
+
+    [LoggerMessage(
+        EventId = 3002,
+        Level = LogLevel.Debug,
+        Message = @"[{key}] pressed {milliseconds}ms")]
+    static partial void LogKeyPress(ILogger logger, ConsoleKey key, int milliseconds);
+
+    [LoggerMessage(
+        EventId = 3003,
+        Level = LogLevel.Debug,
+        Message = @"[{key}] pressing {milliseconds}ms")]
+    static partial void LogKeyPressNoDelay(ILogger logger, ConsoleKey key, int milliseconds);
 }

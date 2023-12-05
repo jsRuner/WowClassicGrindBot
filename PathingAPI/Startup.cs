@@ -1,110 +1,144 @@
 using System;
 using System.IO;
 using System.Reflection;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+using MatBlazor;
+
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.Extensions.Configuration;
+using Microsoft.AspNetCore.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.OpenApi.Models;
-using Serilog;
-using Serilog.Extensions.Logging;
+
 using PPather;
-using SharedLib.Converters;
+
+using Serilog;
+using Serilog.Events;
+
 using SharedLib;
+using SharedLib.Converters;
 
-namespace PathingAPI
+namespace PathingAPI;
+
+public sealed class Startup
 {
-    public sealed class Startup
+    // This method gets called by the runtime. Use this method to add services to the container.
+    // For more information on how to configure your application, visit https://go.microsoft.com/fwlink/?LinkID=398940
+    public void ConfigureServices(IServiceCollection services)
     {
-        public Startup(IConfiguration configuration)
+        services.AddLogging(builder =>
         {
-            Configuration = configuration;
+            PathingAPILoggerSink sink = new();
+            builder.Services.AddSingleton(sink);
 
-            var logfile = "out.log";
-            var config = new LoggerConfiguration()
+            const string outputTemplate = "[{Timestamp:HH:mm:ss:fff} {Level:u1}] {Message:lj}{NewLine}{Exception}";
+
+            Log.Logger = new LoggerConfiguration()
                 //.MinimumLevel.Debug()
                 //.MinimumLevel.Verbose()
-                .WriteTo.PathingAPILoggerSink()
-                .WriteTo.File(logfile, rollingInterval: RollingInterval.Day)
-                .WriteTo.Debug(outputTemplate: "[{Timestamp:HH:mm:ss:fff} {Level:u3}] {Message:lj}{NewLine}{Exception}")
-                .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss:fff} {Level:u3}] {Message:lj}{NewLine}{Exception}");
+                .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+                .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Information)
+                .WriteTo.Sink(sink)
+                .WriteTo.File("out.log",
+                    rollingInterval: RollingInterval.Day,
+                    outputTemplate: outputTemplate)
+                .WriteTo.Debug(outputTemplate: outputTemplate)
+                .WriteTo.Console(outputTemplate: outputTemplate)
+                .CreateLogger();
 
-            Log.Logger = config.CreateLogger();
-            Log.Logger.Debug("Startup()");
-        }
+            ILoggerFactory logFactory = LoggerFactory.Create(builder =>
+            {
+                builder.ClearProviders().AddSerilog();
+            });
 
-        public IConfiguration Configuration { get; }
+            builder.Services.AddSingleton<Microsoft.Extensions.Logging.ILogger>(logFactory.CreateLogger(nameof(Program)));
+        });
 
-        // This method gets called by the runtime. Use this method to add services to the container.
-        // For more information on how to configure your application, visit https://go.microsoft.com/fwlink/?LinkID=398940
-        public void ConfigureServices(IServiceCollection services)
+        Log.Information(DateTimeOffset.Now.ToString());
+
+        services.AddMatBlazor();
+        services.AddRazorPages();
+        services.AddServerSideBlazor();
+        services.AddSingleton<DataConfig>(x => DataConfig.Load()); // going to use the Hardcoded DataConfig.Exp
+        services.AddSingleton<WorldMapAreaDB>();
+        services.AddSingleton<PPatherService>();
+
+        services.AddSingleton(provider =>
+            provider.GetRequiredService<IOptions<JsonOptions>>().Value.SerializerOptions);
+
+        services.Configure<JsonOptions>(options =>
         {
-            var logger = new SerilogLoggerProvider(Log.Logger).CreateLogger(nameof(Program));
-            services.AddSingleton(logger);
+            options.SerializerOptions.PropertyNameCaseInsensitive = true;
+            options.SerializerOptions.Converters.Add(new Vector3Converter());
+            options.SerializerOptions.Converters.Add(new Vector4Converter());
+        });
 
-            services.AddRazorPages();
-            services.AddServerSideBlazor();
-            services.AddSingleton<DataConfig>(x => DataConfig.Load()); // going to use the Hardcoded DataConfig.Exp
-            services.AddSingleton<WorldMapAreaDB>();
-            services.AddSingleton<PPatherService>();
-            services.AddControllers().AddJsonOptions(options =>
-            {
-                options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
-                options.JsonSerializerOptions.Converters.Add(new Vector3Converter());
-                options.JsonSerializerOptions.Converters.Add(new Vector4Converter());
-            });
+        services.AddControllers();
 
-            // Register the Swagger generator, defining 1 or more Swagger documents
-            services.AddSwaggerGen(c =>
-            {
-                c.SwaggerDoc("v1", new OpenApiInfo { Title = "Pathing API", Version = "v1" });
-
-                //// Set the comments path for the Swagger JSON and UI.
-                var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
-                var xmlDocumentPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
-                if (File.Exists(xmlDocumentPath))
-                {
-                    c.IncludeXmlComments(xmlDocumentPath);
-                }
-            });
-        }
-
-        // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
-        public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
+        // Register the Swagger generator, defining 1 or more Swagger documents
+        services.AddSwaggerGen(c =>
         {
-            // Enable middleware to serve generated Swagger as a JSON endpoint.
-            app.UseSwagger();
+            c.SwaggerDoc("v1", new OpenApiInfo { Title = "Pathing API", Version = "v1" });
 
-            // Enable middleware to serve swagger-ui (HTML, JS, CSS, etc.),
-            // specifying the Swagger JSON endpoint.
-            app.UseSwaggerUI(c =>
+            //// Set the comments path for the Swagger JSON and UI.
+            var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
+            var xmlDocumentPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+            if (File.Exists(xmlDocumentPath))
             {
-                c.SwaggerEndpoint("/swagger/v1/swagger.json", "PPather API V1");
-            });
-
-            if (env.IsDevelopment())
-            {
-                app.UseDeveloperExceptionPage();
+                c.IncludeXmlComments(xmlDocumentPath);
             }
-            else
-            {
-                app.UseExceptionHandler("/Error");
-                // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
-                app.UseHsts();
-            }
+        });
 
-            app.UseHttpsRedirection();
-            app.UseStaticFiles();
+        services.BuildServiceProvider(new ServiceProviderOptions() { ValidateOnBuild = true });
+    }
 
-            app.UseRouting();
+    // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
+    public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
+    {
+        // Enable middleware to serve generated Swagger as a JSON endpoint.
+        app.UseSwagger();
 
-            app.UseEndpoints(endpoints =>
-            {
-                endpoints.MapBlazorHub();
-                endpoints.MapFallbackToPage("/_Host");
-                endpoints.MapControllers();
-            });
+        // Enable middleware to serve swagger-ui (HTML, JS, CSS, etc.),
+        // specifying the Swagger JSON endpoint.
+        app.UseSwaggerUI(c =>
+        {
+            c.SwaggerEndpoint("/swagger/v1/swagger.json", "PPather API V1");
+        });
+
+        if (env.IsDevelopment())
+        {
+            app.UseDeveloperExceptionPage();
         }
+        else
+        {
+            app.UseExceptionHandler("/Error");
+            // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
+            app.UseHsts();
+        }
+
+        app.UseHttpsRedirection();
+        app.UseStaticFiles();
+
+        DataConfig dataConfig = app.ApplicationServices.GetRequiredService<DataConfig>();
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            FileProvider = new PhysicalFileProvider(Path.Combine(env.ContentRootPath, dataConfig.Path)),
+            RequestPath = "/path"
+        });
+
+        app.UseRouting();
+
+        app.UseEndpoints(endpoints =>
+        {
+            endpoints.MapBlazorHub();
+            endpoints.MapFallbackToPage("/_Host");
+            endpoints.MapControllers();
+        });
     }
 }

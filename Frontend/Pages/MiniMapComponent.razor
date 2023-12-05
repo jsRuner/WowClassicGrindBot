@@ -1,8 +1,14 @@
 ﻿@implements IDisposable
+
 @inject IBotController botController
-@inject WowScreen wowScreen
-@inject IAddonReader addonReader
+@inject IMinimapImageProvider provider
+@inject IWowScreen screen
+
 @inject MinimapNodeFinder minimapNodeFinder
+
+@using SixLabors.ImageSharp
+@using SixLabors.ImageSharp.PixelFormats
+@using SixLabors.ImageSharp.Formats.Jpeg
 
 <div class="card">
     <div class="card-header">
@@ -21,7 +27,15 @@
     <div class="card-body" style="padding: 0 0 0 0; width:@(Size)px; height:@(Size)px">
         @if (previewEnabled)
         {
-            <img style="width:@(Size)px; height:@(Size)px" src="data:image/png;base64, @WowScreen.ToBase64(wowScreen.MiniMapBitmap, (int)(Size * DownScale))" alt="Red dot" />
+            if (DateTime.UtcNow > lastUpdate.AddMilliseconds(UpdateIntervalMs))
+            {
+                image = provider.MiniMapImage.ToBase64String(JpegFormat.Instance);
+                if (image != "")
+                    lastUpdate = DateTime.UtcNow;
+            }
+
+            <img style="width:@(Size)px; height:@(Size)px" src="@image" alt="Red dot" />
+
         }
     </div>
 </div>
@@ -36,10 +50,31 @@
     [Parameter]
     public EventCallback<int> OnNodeFound { get; set; }
 
+    private string image = "";
+
     private bool lastNodeFound = false;
     private int lastNodeCount = 0;
 
-    private bool previewEnabled = true;
+    private bool preview = false;
+    private bool previewEnabled
+    {
+        get => preview;
+        set
+        {
+            preview = value;
+        }
+    }
+
+    private const int UpdateIntervalMs = 500;
+    private DateTime lastUpdate;
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            screen.OnChanged += this.ImageChanged;
+        }
+    }
 
     protected override void OnInitialized()
     {
@@ -51,9 +86,20 @@
 
     public void Dispose()
     {
+        screen.OnChanged -= this.ImageChanged;
+
+
         if (OnNodeFound.HasDelegate)
         {
             minimapNodeFinder.NodeEvent -= NodeFound;
+        }
+    }
+
+    private async void ImageChanged()
+    {
+        if (previewEnabled)
+        {
+            await base.InvokeAsync(StateHasChanged);
         }
     }
 

@@ -1,25 +1,27 @@
-using System;
-using System.Collections.Generic;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
-namespace PathingAPI
+using Serilog;
+
+namespace PathingAPI;
+
+public sealed class Program
 {
-    public sealed class Program
+    public static string hostUrl = "http://127.0.0.1:5001";
+
+    public static void Main(string[] args)
     {
-        public static string hostUrl = "http://127.0.0.1:5001";
-
-        public static void Main(string[] args)
-        {
-            CreateHostBuilder(args).Build().Run();
-        }
-
-        public static IHostBuilder CreateHostBuilder(string[] args) =>
-            Host.CreateDefaultBuilder(args)
-                .ConfigureWebHostDefaults(webBuilder =>
-                {
-                    webBuilder.UseUrls(hostUrl);
-                    webBuilder.UseStartup<Startup>();
-                });
+        CreateHostBuilder(args).Build().Run();
     }
+
+    public static IHostBuilder CreateHostBuilder(string[] args) =>
+        Host.CreateDefaultBuilder(args)
+            .ConfigureWebHostDefaults(webBuilder =>
+            {
+                webBuilder.UseUrls(hostUrl);
+                webBuilder.ConfigureLogging(logging =>
+                    logging.ClearProviders().AddSerilog());
+                webBuilder.UseStartup<Startup>();
+            });
 }

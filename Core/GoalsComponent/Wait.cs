@@ -1,95 +1,126 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Threading;
 
-namespace Core
+namespace Core;
+
+public sealed class Wait
 {
-    public sealed class Wait
+    private readonly AutoResetEvent globalTime;
+    private readonly CancellationToken token;
+
+    public Wait(AutoResetEvent globalTime, CancellationTokenSource cts)
     {
-        private readonly AutoResetEvent globalTime;
-        private readonly CancellationToken ct;
+        this.globalTime = globalTime;
+        this.token = cts.Token;
+    }
 
-        public Wait(AutoResetEvent globalTime, CancellationTokenSource cts)
+    public void Update()
+    {
+        globalTime.WaitOne();
+    }
+
+    public bool Update(int timeout)
+    {
+        return globalTime.WaitOne(timeout);
+    }
+
+    public void Fixed(int durationMs)
+    {
+        token.WaitHandle.WaitOne(durationMs);
+    }
+
+    [SkipLocalsInit]
+    public bool Till(int timeoutMs, Func<bool> interrupt)
+    {
+        DateTime start = DateTime.UtcNow;
+        while ((DateTime.UtcNow - start).TotalMilliseconds < timeoutMs)
         {
-            this.globalTime = globalTime;
-            this.ct = cts.Token;
+            if (interrupt())
+                return false;
+
+            Update();
         }
 
-        public void Update()
+        return true;
+    }
+
+    [SkipLocalsInit]
+    public float Until(int timeoutMs, Func<bool> interrupt)
+    {
+        DateTime start = DateTime.UtcNow;
+        float elapsedMs;
+        while ((elapsedMs = (float)(DateTime.UtcNow - start).TotalMilliseconds) < timeoutMs)
         {
-            globalTime.WaitOne();
+            if (interrupt())
+                return elapsedMs;
+
+            Update();
         }
 
-        public void Fixed(int durationMs)
+        return -elapsedMs;
+    }
+
+    [SkipLocalsInit]
+    public float Until(int timeoutMs, CancellationToken token)
+    {
+        DateTime start = DateTime.UtcNow;
+        float elapsedMs;
+        while ((elapsedMs = (float)(DateTime.UtcNow - start).TotalMilliseconds) < timeoutMs)
         {
-            ct.WaitHandle.WaitOne(durationMs);
+            if (token.IsCancellationRequested)
+                return elapsedMs;
+
+            Update();
         }
 
-        public bool Till(int timeoutMs, Func<bool> interrupt)
-        {
-            DateTime start = DateTime.UtcNow;
-            while ((DateTime.UtcNow - start).TotalMilliseconds < timeoutMs)
-            {
-                if (interrupt())
-                    return false;
+        return -elapsedMs;
+    }
 
+    [SkipLocalsInit]
+    public float Until(int timeoutMs, Func<bool> interrupt, Action repeat)
+    {
+        DateTime start = DateTime.UtcNow;
+        float elapsedMs;
+        while ((elapsedMs = (float)(DateTime.UtcNow - start).TotalMilliseconds) < timeoutMs)
+        {
+            repeat.Invoke();
+            if (interrupt())
+                return elapsedMs;
+
+            Update();
+        }
+
+        return -elapsedMs;
+    }
+
+    [SkipLocalsInit]
+    public float AfterEquals<T>(int timeoutMs, int updateCount, Func<T> func, Action? repeat = null)
+    {
+        DateTime start = DateTime.UtcNow;
+        float elapsedMs;
+        while ((elapsedMs = (float)(DateTime.UtcNow - start).TotalMilliseconds) < timeoutMs)
+        {
+            T initial = func();
+
+            repeat?.Invoke();
+
+            for (int i = 0; i < updateCount; i++)
                 Update();
-            }
 
-            return true;
+            if (EqualityComparer<T>.Default.Equals(initial, func()))
+                return elapsedMs;
         }
 
-        public WaitResult Until(int timeoutMs, Func<bool> interrupt)
+        return -elapsedMs;
+    }
+
+    public void While(Func<bool> condition)
+    {
+        while (condition())
         {
-            DateTime start = DateTime.UtcNow;
-            double elapsedMs;
-            while ((elapsedMs = (DateTime.UtcNow - start).TotalMilliseconds) < timeoutMs)
-            {
-                if (interrupt())
-                    return new(false, elapsedMs);
-
-                Update();
-            }
-
-            return new(true, elapsedMs);
-        }
-
-        public WaitResult Until(int timeoutMs, Func<bool> interrupt, Action repeat)
-        {
-            DateTime start = DateTime.UtcNow;
-            double elapsedMs;
-            while ((elapsedMs = (DateTime.UtcNow - start).TotalMilliseconds) < timeoutMs)
-            {
-                repeat.Invoke();
-                if (interrupt())
-                    return new(false, elapsedMs);
-
-                Update();
-            }
-
-            return new(true, elapsedMs);
-        }
-
-        public WaitResult UntilNot(int timeoutMs, Func<bool> interrupt)
-        {
-            DateTime start = DateTime.UtcNow;
-            double elapsedMs;
-            while ((elapsedMs = (DateTime.UtcNow - start).TotalMilliseconds) < timeoutMs)
-            {
-                if (!interrupt())
-                    return new(false, elapsedMs);
-
-                Update();
-            }
-
-            return new(true, elapsedMs);
-        }
-
-        public void While(Func<bool> condition)
-        {
-            while (condition())
-            {
-                Update();
-            }
+            Update();
         }
     }
 }

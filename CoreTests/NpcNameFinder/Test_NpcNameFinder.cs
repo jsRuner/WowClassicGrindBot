@@ -1,174 +1,156 @@
-﻿using System.Drawing;
 using Core.Goals;
 using SharedLib.NpcFinder;
 using Microsoft.Extensions.Logging;
 using System.Threading;
 using System.Text;
 using System.Diagnostics;
-using System.Linq;
 using System;
-using SharedLib.Extensions;
 using Core;
 using Game;
+using SharedLib;
+
+using static System.Diagnostics.Stopwatch;
 
 #pragma warning disable 0162
 #nullable enable
 
-namespace CoreTests
+namespace CoreTests;
+
+internal sealed class Test_NpcNameFinder : IDisposable
 {
-    public sealed class Test_NpcNameFinder : IDisposable
+    private const bool saveImage = false;
+    private const bool showOverlay = true;
+
+    private const bool LogEachUpdate = false;
+    private const bool LogEachDetail = false;
+
+    private const bool debugTargeting = false;
+    private const bool debugSkinning = false;
+    private const bool debugTargetVsAdd = false;
+
+    private readonly ILogger logger;
+    private readonly NpcNameFinder npcNameFinder;
+    private readonly NpcNameTargeting npcNameTargeting;
+    private readonly NpcNameTargetingLocations locations;
+
+    private readonly IWowScreen screen;
+
+    private readonly Stopwatch stopwatch;
+    private readonly StringBuilder stringBuilder;
+
+    private readonly NpcNameOverlay? npcNameOverlay;
+
+    private DateTime lastNpcUpdate;
+    private double updateDuration;
+
+    public Test_NpcNameFinder(ILogger logger, WowProcess process,
+        IWowScreen screen, ILoggerFactory loggerFactory, NpcNames types)
     {
-        private const bool saveImage = true;
-        private const bool LogEachUpdate = true;
-        private const bool LogShowResult = false;
+        this.logger = logger;
+        this.screen = screen;
 
-        private const bool debugTargeting = false;
-        private const bool debugSkinning = false;
+        stopwatch = new();
+        stringBuilder = new();
 
-        private readonly ILogger logger;
-        private readonly NpcNameFinder npcNameFinder;
-        private readonly NpcNameTargeting npcNameTargeting;
+        INpcResetEvent npcResetEvent = new NpcResetEvent();
+        npcNameFinder = new(logger, screen, npcResetEvent);
 
-        private readonly WowProcess wowProcess;
-        private readonly WowScreen wowScreen;
+        locations = new(npcNameFinder);
 
-        private readonly Stopwatch stopwatch = new();
-        private readonly StringBuilder stringBuilder = new();
+        MockMouseOverReader mouseOverReader = new();
+        MockGameMenuWindowShown gmws = new();
 
-        private readonly Graphics paint;
-        private readonly System.Drawing.Bitmap paintBitmap;
-        private readonly Font font = new("Arial", 10);
-        private readonly SolidBrush brush = new(Color.White);
-        private readonly Pen whitePen = new(Color.White, 1);
+        Wait wait = new(new(false), new());
 
-        private readonly NpcNameOverlay? npcNameOverlay;
+        WowProcessInput input = new(loggerFactory.CreateLogger<WowProcessInput>(), new(), process);
 
-        public Test_NpcNameFinder(ILogger logger, NpcNames types, bool useOverlay)
+        npcNameTargeting = new(loggerFactory.CreateLogger<NpcNameTargeting>(),
+            new(), screen, npcNameFinder, locations, input,
+            mouseOverReader, new NoBlacklist(), wait, gmws);
+
+        npcNameFinder.ChangeNpcType(types);
+
+        if (showOverlay)
+            npcNameOverlay = new(process.MainWindowHandle, npcNameFinder,
+                locations, debugTargeting, debugSkinning, debugTargetVsAdd);
+    }
+
+    ~Test_NpcNameFinder()
+    {
+        Dispose();
+    }
+
+    public void Dispose()
+    {
+        npcNameOverlay?.Dispose();
+    }
+
+    public void UpdateScreen()
+    {
+        screen.Update();
+    }
+
+    public (double capture, double update) Execute(int NpcUpdateIntervalMs)
+    {
+        long captureStart = GetTimestamp();
+        UpdateScreen();
+        double captureDuration = GetElapsedTime(captureStart).TotalMilliseconds;
+
+        if (LogEachUpdate)
         {
-            this.logger = logger;
-
-            wowProcess = new();
-            wowScreen = new(logger, wowProcess);
-            WowProcessInput wowProcessInput = new(logger, new(), wowProcess);
-
-            npcNameFinder = new(logger, wowScreen, new AutoResetEvent(false));
-
-            MockMouseOverReader mouseOverReader = new();
-            npcNameTargeting = new(logger, new(), wowScreen, npcNameFinder, wowProcessInput, mouseOverReader, new NoBlacklist(), null!);
-
-            npcNameFinder.ChangeNpcType(types);
-
-            if (saveImage)
-            {
-                paintBitmap = wowScreen.Bitmap;
-                paint = Graphics.FromImage(paintBitmap);
-            }
-
-            if (useOverlay)
-                npcNameOverlay = new(wowProcess.Process.MainWindowHandle, npcNameFinder, npcNameTargeting, debugTargeting, debugSkinning);
+            stringBuilder.Length = 0;
+            stringBuilder.Append("Capture: ");
+            stringBuilder.Append($"{captureDuration:F5}");
+            stringBuilder.Append("ms");
         }
 
-        ~Test_NpcNameFinder()
+        if (DateTime.UtcNow > lastNpcUpdate.AddMilliseconds(NpcUpdateIntervalMs))
         {
-            Dispose();
-        }
-
-        public void Dispose()
-        {
-            npcNameOverlay?.Dispose();
-
-            wowScreen.Dispose();
-            wowProcess.Dispose();
-        }
-
-        public void Execute()
-        {
-            if (LogEachUpdate)
-                stopwatch.Restart();
-
-            wowScreen.Update();
-
-            if (LogEachUpdate)
-                logger.LogInformation($"Capture: {stopwatch.ElapsedMilliseconds}ms");
-
-            if (LogEachUpdate)
-                stopwatch.Restart();
-
+            long updateStart = GetTimestamp();
             npcNameFinder.Update();
+            updateDuration = GetElapsedTime(updateStart).TotalMilliseconds;
 
-            if (LogEachUpdate)
-                logger.LogInformation($"Update: {stopwatch.ElapsedMilliseconds}ms");
-
-            if (saveImage)
-            {
-                SaveImage();
-            }
-
-            if (LogEachUpdate && LogShowResult)
-            {
-                stringBuilder.Length = 0;
-
-                if (npcNameFinder.Npcs.Any())
-                    stringBuilder.AppendLine();
-
-                int i = 0;
-                foreach (NpcPosition n in npcNameFinder.Npcs)
-                {
-                    stringBuilder.Append($"{i,2}");
-                    stringBuilder.Append(" -> rect=");
-                    stringBuilder.Append(n.Rect);
-                    stringBuilder.Append(" ClickPoint=");
-                    stringBuilder.AppendLine($"{{{n.ClickPoint.X,4},{n.ClickPoint.Y,4}}}");
-                    i++;
-                }
-
-                logger.LogInformation(stringBuilder.ToString());
-            }
+            lastNpcUpdate = DateTime.UtcNow;
         }
 
-        private void SaveImage()
+        if (LogEachUpdate)
         {
-            if (npcNameFinder.Npcs.Any())
+            stringBuilder.Append(" | ");
+            stringBuilder.Append($"Update: ");
+            stringBuilder.Append($"{updateDuration:F5}");
+            stringBuilder.Append("ms");
+
+            logger.LogInformation(stringBuilder.ToString());
+        }
+
+        if (saveImage)
+        {
+            // TODO: save image
+        }
+
+        if (LogEachUpdate && LogEachDetail)
+        {
+            stringBuilder.Length = 0;
+
+            if (npcNameFinder.Npcs.Count > 0)
+                stringBuilder.AppendLine();
+
+            int i = 0;
+            foreach (NpcPosition n in npcNameFinder.Npcs)
             {
-                paint.DrawRectangle(whitePen, npcNameFinder.Area);
-
-                int j = 0;
-                foreach (var npc in npcNameFinder.Npcs)
-                {
-                    if (debugTargeting)
-                    {
-                        foreach (var l in npcNameTargeting.locTargeting)
-                        {
-                            paint.DrawEllipse(whitePen, l.X + npc.ClickPoint.X, l.Y + npc.ClickPoint.Y, 5, 5);
-                        }
-                    }
-
-                    if (debugSkinning)
-                    {
-                        int c = npcNameTargeting.locFindBy.Length;
-                        int e = 3;
-                        Point[] attemptPoints = new Point[c + (c * e)];
-                        for (int i = 0; i < c; i += e)
-                        {
-                            Point p = npcNameTargeting.locFindBy[i];
-                            attemptPoints[i] = p;
-                            attemptPoints[i + c] = new Point(npc.Rect.Width / 2, p.Y).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight);
-                            attemptPoints[i + c + 1] = new Point(-npc.Rect.Width / 2, p.Y).Scale(npcNameFinder.ScaleToRefWidth, npcNameFinder.ScaleToRefHeight);
-                        }
-
-                        foreach (var l in attemptPoints)
-                        {
-                            paint.DrawEllipse(whitePen, l.X + npc.ClickPoint.X, l.Y + npc.ClickPoint.Y, 5, 5);
-                        }
-                    }
-
-                    paint.DrawRectangle(whitePen, npc.Rect);
-                    paint.DrawString(j.ToString(), font, brush, new PointF(npc.Rect.Left - 20f, npc.Rect.Top));
-                    j++;
-                }
+                stringBuilder.Append($"{i,2} ");
+                stringBuilder.AppendLine(n.ToString());
+                i++;
             }
 
-            paintBitmap.Save("target_names.png");
+            logger.LogInformation(stringBuilder.ToString());
         }
+
+        return (captureDuration, updateDuration);
+    }
+
+    public bool Execute_FindTargetBy(ReadOnlySpan<CursorType> cursorType)
+    {
+        return npcNameTargeting.FindBy(cursorType, CancellationToken.None);
     }
 }

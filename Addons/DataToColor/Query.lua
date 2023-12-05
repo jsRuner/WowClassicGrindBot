@@ -21,6 +21,7 @@ local C_Map = C_Map
 local UnitExists = UnitExists
 local GetUnitName = GetUnitName
 local UnitReaction = UnitReaction
+local UnitIsFriend = UnitIsFriend
 local GetInventorySlotInfo = GetInventorySlotInfo
 local GetInventoryItemCount = GetInventoryItemCount
 local CheckInteractDistance = CheckInteractDistance
@@ -47,6 +48,9 @@ local GetSkillLineInfo = GetSkillLineInfo
 local UnitIsGhost = UnitIsGhost
 local C_DeathInfo = C_DeathInfo
 local UnitAttackSpeed = UnitAttackSpeed
+local UnitRangedDamage = UnitRangedDamage
+
+local GameMenuFrame = GameMenuFrame
 
 -- bits
 
@@ -66,6 +70,7 @@ local GetInventoryItemID = GetInventoryItemID
 local UnitOnTaxi = UnitOnTaxi
 local IsSwimming = IsSwimming
 local IsFalling = IsFalling
+local IsFlying = IsFlying
 local IsIndoors = IsIndoors
 local IsStealthed = IsStealthed
 local GetMirrorTimerInfo = GetMirrorTimerInfo
@@ -113,7 +118,7 @@ function DataToColor:Bits1()
         (UnitIsDeadOrGhost(DataToColor.C.unitPlayer) and 2 or 0) ^ 2 +
         (UnitCharacterPoints(DataToColor.C.unitPlayer) > 0 and 2 or 0) ^ 3 +
         (UnitExists(DataToColor.C.unitmouseover) and 2 or 0) ^ 4 +
-        ((UnitReaction(DataToColor.C.unitPlayer, DataToColor.C.unitTarget) or 0) <= 4 and 2 or 0) ^ 5 + -- isHostile
+        (DataToColor:IsUnitHostile(DataToColor.C.unitPlayer, DataToColor.C.unitTarget) and 2 or 0) ^ 5 +
         (UnitIsVisible(DataToColor.C.unitPet) and not UnitIsDead(DataToColor.C.unitPet) and 2 or 0) ^ 6 +
         (mainHandEnchant and 2 or 0) ^ 7 +
         (offHandEnchant and 2 or 0) ^ 8 +
@@ -144,18 +149,22 @@ function DataToColor:Bits2()
         (UnitAffectingCombat(DataToColor.C.unitFocus) and 2 or 0) ^ 4 +
         (UnitExists(DataToColor.C.unitFocusTarget) and 2 or 0) ^ 5 +
         (UnitAffectingCombat(DataToColor.C.unitFocusTarget) and 2 or 0) ^ 6 +
-        ((UnitReaction(DataToColor.C.unitPlayer, DataToColor.C.unitFocusTarget) or 0) <= 4 and 2 or 0) ^ 7 + -- isHostile
+        (DataToColor:IsUnitHostile(DataToColor.C.unitPlayer, DataToColor.C.unitFocusTarget) and 2 or 0) ^ 7 +
         (UnitIsDead(DataToColor.C.unitmouseover) and 2 or 0) ^ 8 +
         (UnitIsDead(DataToColor.C.unitPetTarget) and 2 or 0) ^ 9 +
         (IsStealthed() and 2 or 0) ^ 10 +
         (UnitIsTrivial(DataToColor.C.unitTarget) and 2 or 0) ^ 11 +
         (UnitIsTrivial(DataToColor.C.unitmouseover) and 2 or 0) ^ 12 +
         (UnitIsTapDenied(DataToColor.C.unitmouseover) and 2 or 0) ^ 13 +
-        ((UnitReaction(DataToColor.C.unitPlayer, DataToColor.C.unitmouseover) or 0) <= 4 and 2 or 0) ^ 14 + -- isHostile
+        (DataToColor:IsUnitHostile(DataToColor.C.unitPlayer, DataToColor.C.unitmouseover) and 2 or 0) ^ 14 +
         (UnitIsPlayer(DataToColor.C.unitmouseover) and 2 or 0) ^ 15 +
         (DataToColor:IsUnitsTargetIsPlayerOrPet(DataToColor.C.unitmouseover, DataToColor.C.unitmouseovertarget) and 2 or 0) ^ 16 +
         (UnitPlayerControlled(DataToColor.C.unitmouseover) and 2 or 0) ^ 17 +
-        (UnitPlayerControlled(DataToColor.C.unitTarget) and 2 or 0) ^ 18
+        (UnitPlayerControlled(DataToColor.C.unitTarget) and 2 or 0) ^ 18 +
+        ((DataToColor.autoFollow) and 2 or 0) ^ 19 +
+        ((GameMenuFrame:IsShown() and 2 or 0)) ^ 20 +
+        ((IsFlying() and 2 or 0)) ^ 21 +
+        ((DataToColor.moving and 2 or 0)) ^ 22
 end
 
 function DataToColor:CustomTrigger(t)
@@ -194,6 +203,7 @@ end
 
 function DataToColor:populateAuraTimer(func, unitId, queue)
     local count = 0
+    local existingAuras = {}
     for i = 1, 40 do
         local name, texture, _, _, duration, expirationTime = func(unitId, i)
         if name == nil then
@@ -202,8 +212,11 @@ function DataToColor:populateAuraTimer(func, unitId, queue)
         count = i
 
         if queue ~= nil then
+            existingAuras[texture] = true
+
             if duration == 0 then
                 expirationTime = GetTime() + 14400 -- 4 hours - anything above considered unlimited duration
+                --DataToColor:Print(texture, " unlimited aura added ", expirationTime)
             end
 
             if not queue:exists(texture) then
@@ -215,6 +228,18 @@ function DataToColor:populateAuraTimer(func, unitId, queue)
             end
         end
     end
+
+    -- Remove unlimited duration Auras.
+    -- Such as clickable Mounts and Buffs 
+    if queue ~= nil then
+        for k in queue:iterator() do
+            if existingAuras[k] == nil then
+                --DataToColor:Print(k, " remove unlimited")
+                queue:set(k, GetTime())
+            end
+        end
+    end
+
     return count
 end
 
@@ -364,8 +389,14 @@ function DataToColor:areSpellsInRange()
     local inRange = 0
     local targetCount = #DataToColor.S.spellInRangeTarget
     for i = 1, targetCount do
-        if IsSpellInRange(GetSpellInfo(DataToColor.S.spellInRangeTarget[i]), DataToColor.C.unitTarget) == 1 then
-            inRange = inRange + (2 ^ (i - 1))
+        local spellId = DataToColor.S.spellInRangeTarget[i]
+        local spellName = GetSpellInfo(spellId)
+        if spellName ~= nil then
+            if IsSpellInRange(spellName, DataToColor.C.unitTarget) == 1 then
+                inRange = inRange + (2 ^ (i - 1))
+            end
+        else
+            --print(spellId .. " is null")
         end
     end
 
@@ -450,6 +481,11 @@ function DataToColor:getMeleeAttackSpeed(unit)
     return 10000 * floor((off or 0) * 100) + floor((main or 0) * 100)
 end
 
+function DataToColor:getUnitRangedDamage(unit)
+    local speed = UnitRangedDamage(unit)
+    return floor((speed or 0) * 100)
+end
+
 function DataToColor:getAvgEquipmentDurability()
     local c = 0
     local m = 0
@@ -525,4 +561,11 @@ end
 function DataToColor:IsUnitsTargetIsPlayerOrPet(unit, unittarget)
     local x = DataToColor:UnitsTargetAsNumber(unit, unittarget)
     return x == 1 or x == 4
+end
+
+function DataToColor:IsUnitHostile(unit, unittarget)
+    return
+        UnitExists(unittarget) and
+        (UnitReaction(unit, unittarget) or 0) <= 4 and
+        not UnitIsFriend(unit, unittarget)
 end

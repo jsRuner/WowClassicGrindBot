@@ -45,11 +45,17 @@
       },
       {
         "Name": "AutoAttack",
-        "Requirement": "!AutoAttacking"
+        "Requirements": [
+          "!Casting",
+          "!AutoAttacking"
+        ]
       },
       {
         "Name": "Approach",
-        "Log": false
+        "Requirements": [
+          "!Casting",
+          "AutoAttacking"
+        ]
       }
     ]
   },
@@ -65,7 +71,8 @@
         "Key": "4",
         "HasCastBar": true,
         "Requirement": "!Has Pet",
-        "AfterCastWaitCastbar": true
+        "AfterCastWaitCastbar": true,
+        "AfterCastAuraExpected": true
       },
       {
         "Name": "Food",

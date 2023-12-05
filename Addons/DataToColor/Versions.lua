@@ -42,25 +42,27 @@ end
 
 local Som140 = DataToColor.IsClassic() and select(4, GetBuildInfo()) == 11400
 local TBC253 = DataToColor.IsClassic_BCC() and select(4, GetBuildInfo()) >= 20503
+local TBC252 = DataToColor.IsClassic_BCC() and select(4, GetBuildInfo()) >= 20502
 local Wrath340 = DataToColor.IsClassic_BCC() and select(4, GetBuildInfo()) >= 30400
 
 if WOW_PROJECT_ID == WOW_PROJECT_MAINLINE then
-	DataToColor.ClientVersion = 1
+  DataToColor.ClientVersion = 1
 elseif WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC then
   DataToColor.ClientVersion = 4
 elseif WOW_PROJECT_ID == WOW_PROJECT_BURNING_CRUSADE_CLASSIC then
-	if LE_EXPANSION_LEVEL_CURRENT == LE_EXPANSION_NORTHREND or LE_EXPANSION_LEVEL_CURRENT == LE_EXPANSION_WRATH_OF_THE_LICH_KING then
-		DataToColor.ClientVersion = 4
-	elseif LE_EXPANSION_LEVEL_CURRENT == LE_EXPANSION_BURNING_CRUSADE then
-		DataToColor.ClientVersion = 3
-	end
+  if LE_EXPANSION_LEVEL_CURRENT == LE_EXPANSION_NORTHREND or
+      LE_EXPANSION_LEVEL_CURRENT == LE_EXPANSION_WRATH_OF_THE_LICH_KING then
+    DataToColor.ClientVersion = 4
+  elseif LE_EXPANSION_LEVEL_CURRENT == LE_EXPANSION_BURNING_CRUSADE then
+    DataToColor.ClientVersion = 3
+  end
 elseif WOW_PROJECT_ID == WOW_PROJECT_CLASSIC then
-	DataToColor.ClientVersion = 2
+  DataToColor.ClientVersion = 2
 end
 
 if DataToColor.IsRetail() or TBC253 or DataToColor.IsClassic_Wrath() then
   DataToColor.UnitCastingInfo = UnitCastingInfo
-elseif Som140 then
+elseif Som140 or TBC252 then
   DataToColor.UnitCastingInfo = function(unit)
     local name, text, texture, startTimeMS, endTimeMS, isTradeSkill, castID, spellId = UnitCastingInfo(unit)
     return name, text, texture, startTimeMS, endTimeMS, isTradeSkill, castID, nil, spellId
@@ -82,7 +84,7 @@ end
 
 if DataToColor.IsRetail() or TBC253 or DataToColor.IsClassic_Wrath() then
   DataToColor.UnitChannelInfo = UnitChannelInfo
-elseif Som140 then
+elseif Som140 or TBC252 then
   DataToColor.UnitChannelInfo = function(unit)
     local name, text, texture, startTimeMS, endTimeMS, isTradeSkill, spellId = UnitChannelInfo(unit)
     return name, text, texture, startTimeMS, endTimeMS, isTradeSkill, nil, spellId
@@ -104,32 +106,18 @@ end
 
 -- bag changes from 10.0
 
-DataToColor.GetContainerNumSlots = GetContainerNumSlots
-if DataToColor.GetContainerNumSlots == nil then
-  DataToColor.GetContainerNumSlots = C_Container.GetContainerNumSlots
-end
+DataToColor.GetContainerNumSlots = GetContainerNumSlots or C_Container.GetContainerNumSlots
+DataToColor.GetContainerItemInfo = GetContainerItemInfo or
+    function(bagID, slot)
+      local o = C_Container.GetContainerItemInfo(bagID, slot)
+      if o == nil then return nil end
+      return o.iconFileID, o.stackCount, o.isLocked, o.quality, o.isReadable, o.hasLoot, o.hyperlink, o.isFiltered, o.hasNoValue, o.itemID, o.isBound
+    end
 
-DataToColor.GetContainerItemInfo = GetContainerItemInfo
-if DataToColor.GetContainerItemInfo == nil then
-  DataToColor.GetContainerItemInfo = C_Container.GetContainerItemInfo
-end
+DataToColor.GetContainerNumFreeSlots = GetContainerNumFreeSlots or C_Container.GetContainerNumFreeSlots
+DataToColor.GetContainerItemLink = GetContainerItemLink or C_Container.GetContainerItemLink
+DataToColor.PickupContainerItem = PickupContainerItem or C_Container.PickupContainerItem
+DataToColor.UseContainerItem = UseContainerItem or C_Container.UseContainerItem
+DataToColor.ContainerIDToInventoryID = ContainerIDToInventoryID or C_Container.ContainerIDToInventoryID
 
-DataToColor.GetContainerNumFreeSlots = GetContainerNumFreeSlots
-if DataToColor.GetContainerNumFreeSlots == nil then
-  DataToColor.GetContainerNumFreeSlots = C_Container.GetContainerNumFreeSlots
-end
-
-DataToColor.GetContainerItemLink = GetContainerItemLink
-if DataToColor.GetContainerItemLink == nil then
-  DataToColor.GetContainerItemLink = C_Container.GetContainerItemLink
-end
-
-DataToColor.PickupContainerItem = PickupContainerItem
-if DataToColor.PickupContainerItem == nil then
-  DataToColor.PickupContainerItem = C_Container.PickupContainerItem
-end
-
-DataToColor.UseContainerItem = UseContainerItem
-if DataToColor.UseContainerItem == nil then
-  DataToColor.UseContainerItem = C_Container.UseContainerItem
-end
+DataToColor.GetGossipOptions = GetGossipOptions or C_GossipInfo.GetOptions

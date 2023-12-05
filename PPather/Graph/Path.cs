@@ -18,30 +18,29 @@
 
 using System.Collections.Generic;
 using System.Numerics;
+using System.Runtime.InteropServices;
 
-namespace PPather.Graph
+namespace PPather.Graph;
+
+public sealed class Path
 {
-    public sealed class Path
+    public List<Vector3> locations { get; } = new();
+
+    public Vector3 GetLast => locations[^1];
+
+    public Path(List<Spot> steps)
     {
-        public List<Vector3> locations { get; set; } = new();
+        locations.Capacity = steps.Count;
 
-        public int Count => locations.Count;
-
-        public Vector3 GetLast => locations[^1];
-
-        public Vector3 this[int index] => locations[index];
-
-        public Path(List<Spot> steps)
+        var span = CollectionsMarshal.AsSpan(steps);
+        for (int i = 0; i < span.Length; i++)
         {
-            foreach (Spot s in steps)
-            {
-                Add(s.Loc);
-            }
+            Add(span[i].Loc);
         }
+    }
 
-        public void Add(Vector3 l)
-        {
-            locations.Add(l);
-        }
+    public void Add(Vector3 l)
+    {
+        locations.Add(l);
     }
 }

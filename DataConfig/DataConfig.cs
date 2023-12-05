@@ -7,7 +7,7 @@ using static Newtonsoft.Json.JsonConvert;
 
 public static class DataConfigMeta
 {
-    public const int Version = 12;
+    public const int Version = 13;
     public const string DefaultFileName = "data_config.json";
 }
 
@@ -31,13 +31,15 @@ public sealed class DataConfig
     [JsonIgnore]
     public string PPather => Join(Root, "PPather");
     [JsonIgnore]
+    public string Screenshot => Join(Root, "cap");
+    [JsonIgnore]
     public string ExpHistory => Join(Root, "History", Exp);
     [JsonIgnore]
     public string ExpExperience => Join(Root, "experience", Exp);
 
     // at runtime - determined from the running exe file version
     [JsonIgnore]
-    public string Exp { get; set; } = "tbc"; // hardcoded default
+    public string Exp { get; set; } = "wrath"; // hardcoded default
 
     public static DataConfig Load()
     {

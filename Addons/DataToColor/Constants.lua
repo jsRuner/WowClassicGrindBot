@@ -6,18 +6,32 @@ local UnitGUID = UnitGUID
 local UnitClass = UnitClass
 local UnitRace = UnitRace
 
+local WOW_PROJECT_ID = WOW_PROJECT_ID
+local WOW_PROJECT_CLASSIC = WOW_PROJECT_CLASSIC
+
+DataToColor.C.MAX_ACTIONBAR_SLOT = 120 -- up to moonkin form
+
 DataToColor.C.unitPlayer = "player"
 DataToColor.C.unitTarget = "target"
 DataToColor.C.unitParty = "party"
 DataToColor.C.unitRaid = "raid"
 DataToColor.C.unitPet = "pet"
-DataToColor.C.unitFocus = "focus"
-DataToColor.C.unitFocusTarget = "focustarget"
+
+if WOW_PROJECT_ID == WOW_PROJECT_CLASSIC then
+    DataToColor.C.unitFocus = "party1"
+    DataToColor.C.unitFocusTarget = "party1target"
+else
+    DataToColor.C.unitFocus = "focus"
+    DataToColor.C.unitFocusTarget = "focustarget"
+end
+
 DataToColor.C.unitPetTarget = "pettarget"
 DataToColor.C.unitTargetTarget = "targettarget"
 DataToColor.C.unitNormal = "normal"
 DataToColor.C.unitmouseover = "mouseover"
 DataToColor.C.unitmouseovertarget = "mouseovertarget"
+
+DataToColor.C.SpellQueueWindow = "SpellQueueWindow"
 
 -- Character's name
 DataToColor.C.CHARACTER_NAME = UnitName(DataToColor.C.unitPlayer)

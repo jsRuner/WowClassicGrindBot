@@ -7,7 +7,7 @@
   "NPCMaxLevels_Below": 10,
   "PathThereAndBack": true,
   "PathReduceSteps": false,
-  "MountKey": "N0",
+  "Mount": { "Key": "N0"},
   "IntVariables": {
     "CD_MIN_TARGET_HP%": 70,
     "MIN_RAGE_HEROIC_STRIKE": 42,
@@ -16,23 +16,25 @@
     "USE_TRINKET_1": 0,
     "USE_TRINKET_2": 0
   },
-  "Form": [
-    {
-      "Name": "Battle Stance",
-      "Key": "F1",
-      "Form": "Warrior_BattleStance"
-    },
-    {
-      "Name": "Defensive Stance",
-      "Key": "F2",
-      "Form": "Warrior_DefensiveStance"
-    },
-    {
-      "Name": "Berserker Stance",
-      "Key": "F3",
-      "Form": "Warrior_BerserkerStance"
-    }
-  ],
+  "Form": {
+    "Sequence": [
+      {
+        "Name": "Battle Stance",
+        "Key": "F1",
+        "Form": "Warrior_BattleStance"
+      },
+      {
+        "Name": "Defensive Stance",
+        "Key": "F2",
+        "Form": "Warrior_DefensiveStance"
+      },
+      {
+        "Name": "Berserker Stance",
+        "Key": "F3",
+        "Form": "Warrior_BerserkerStance"
+      }
+    ]
+  },
   "Pull": {
     "Sequence": [
       {
@@ -135,6 +137,7 @@
         "Name": "Pummel",
         "Key": "-",
         "WhenUsable": true,
+        "Form": "Warrior_BerserkerStance",
         "UseWhenTargetIsCasting": true,
         "Requirements": [
           "Form:Warrior_BerserkerStance"
@@ -180,7 +183,7 @@
         "Key": "N2",
         "WhenUsable": true,
         "Requirements": [
-          "Talent: Mortal Strike",
+          "Talent:Mortal Strike",
           "MainHandSwing < -400",
           "MobCount < 2",
           "TargetHealth% > 20"
@@ -284,7 +287,7 @@
         "Name": "HP regen",
         "Requirements": [
           "FoodCount == 0 || !Usable:Food",
-          "Health% < 90"
+          "Health% < 50"
         ]
       }
     ]
@@ -295,7 +298,7 @@
         "Name": "Repair",
         "Key": "C",
         "Requirement": "Durability% < 35",
-        "PathFilename": "60_Hellfire_Honor_Hold_Vendor.json",
+        "PathFilename": "60_Hellfire Peninsula_Honor Hold_Vendor.json",
         "Cost": 6
       },
       {
@@ -305,7 +308,7 @@
           "BagFull",
           "BagGreyItem"
         ],
-        "PathFilename": "60_Hellfire_Honor_Hold_Vendor.json",
+        "PathFilename": "60_Hellfire Peninsula_Honor Hold_Vendor.json",
         "Cost": 6
       }
     ]

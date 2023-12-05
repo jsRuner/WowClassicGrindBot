@@ -1,42 +1,68 @@
 ﻿using Core.GOAP;
 
-namespace Core.Goals
+namespace Core.Goals;
+
+public sealed class FollowFocusGoal : GoapGoal
 {
-    public sealed class FollowFocusGoal : GoapGoal
+    public override float Cost => 19f;
+
+    private readonly ConfigurableInput input;
+    private readonly PlayerReader playerReader;
+    private readonly AddonBits bits;
+    private readonly Wait wait;
+
+    public FollowFocusGoal(ConfigurableInput input,
+        PlayerReader playerReader,
+        AddonBits bits,
+        Wait wait)
+        : base(nameof(FollowFocusGoal))
     {
-        public override float Cost => 19f;
+        this.input = input;
+        this.playerReader = playerReader;
+        this.bits = bits;
+        this.wait = wait;
 
-        private readonly ConfigurableInput input;
-        private readonly PlayerReader playerReader;
-        private readonly Wait wait;
+        AddPrecondition(GoapKey.hasfocus, true);
+        AddPrecondition(GoapKey.dangercombat, false);
+        AddPrecondition(GoapKey.damagedone, false);
+        AddPrecondition(GoapKey.damagetaken, false);
+        AddPrecondition(GoapKey.producedcorpse, false);
+        AddPrecondition(GoapKey.consumecorpse, false);
+    }
 
-        public FollowFocusGoal(ConfigurableInput input, PlayerReader playerReader, Wait wait)
-            : base(nameof(FollowFocusGoal))
+    public override void OnEnter()
+    {
+        if (input.IsKeyDown(input.ForwardKey))
         {
-            this.input = input;
-            this.playerReader = playerReader;
-            this.wait = wait;
-
-            AddPrecondition(GoapKey.hasfocus, true);
-            AddPrecondition(GoapKey.dangercombat, false);
-            AddPrecondition(GoapKey.damagedone, false);
-            AddPrecondition(GoapKey.damagetaken, false);
-            AddPrecondition(GoapKey.producedcorpse, false);
-            AddPrecondition(GoapKey.consumecorpse, false);
+            input.StopForward(true);
         }
+    }
 
-        public override void Update()
+    public override void OnExit()
+    {
+        if (playerReader.TargetGuid == playerReader.FocusGuid)
         {
-            if (playerReader.TargetGuid != playerReader.FocusGuid)
-            {
-                input.TargetFocus();
-                wait.Update();
-            }
-
-            if (playerReader.SpellInRange.Focus_Inspect)
-                input.FollowTarget();
-
+            input.PressClearTarget();
             wait.Update();
         }
+    }
+
+    public override void Update()
+    {
+        if (playerReader.TargetGuid != playerReader.FocusGuid)
+        {
+            input.PressTargetFocus();
+            wait.Update();
+        }
+
+        if (playerReader.TargetGuid == playerReader.FocusGuid &&
+            playerReader.SpellInRange.Focus_Inspect &&
+            !bits.AutoFollow() &&
+            input.FollowTarget.GetRemainingCooldown() == 0)
+        {
+            input.PressFollowTarget();
+        }
+
+        wait.Update();
     }
 }

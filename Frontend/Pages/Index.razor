@@ -1,10 +1,11 @@
 ﻿@page "/"
 
 @inject ILogger logger
-@inject IAddonReader addonReader
+
 @inject IBotController botController
 @inject IJSRuntime JSRuntime
 @inject AddonConfigurator addonConfigurator
+@inject FrontendUpdate updater // TODO: this is a hack to instantiate this class
 
 @implements IDisposable
 
@@ -13,7 +14,7 @@
         @if (AddonConfig.Exists() && FrameConfig.Exists())
         {
             <div class="col-sm">
-                <ScreenshotComponent Size="800" Stretch="false" />
+                <ScreenshotComponent Stretch="false" />
                 <table width="100%" style="margin-top: 10px; margin-bottom: 10px;">
                     <tr>
                         <td valign="top">
@@ -21,6 +22,11 @@
                         </td>
                         <td valign="top">
                             <BagChanges />
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <ChatComponent MaxHeight="400" />
                         </td>
                     </tr>
                 </table>

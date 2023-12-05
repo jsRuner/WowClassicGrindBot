@@ -5,12 +5,15 @@ on:
     paths-ignore:
       - '.github/*'
       - '.github/ISSUE_TEMPLATE/**'
-      - '*.yml'
       - 'README.md'
-      - '*.lua'
-      - '*.toc'
-      - '*.json'
-      - '*.bmp'
+      - '**.yml'
+      - '**.lua'
+      - '**.toc'
+      - '**.json'
+      - '**.bmp'
+      - '**.js'
+      - '**.jpg'
+      - '**.png'
       
 
 jobs:
@@ -21,9 +24,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Setup .NET
-      uses: actions/setup-dotnet@v2
+      uses: actions/setup-dotnet@v3
       with:
-        dotnet-version: 7.0.x
+        dotnet-version: 8.0.x
     - name: Restore dependencies
       run: dotnet restore
     - name: Build

@@ -1,9 +1,19 @@
-﻿using SharedLib;
+﻿using System;
 
-namespace Game
+using SharedLib;
+
+namespace Game;
+
+public interface IWowScreen : IRectProvider, IScreenImageProvider, IMinimapImageProvider, IDisposable
 {
-    public interface IWowScreen : IColorReader, IRectProvider
-    {
-        bool Enabled { get; set; }
-    }
+    bool Enabled { get; set; }
+
+    bool MinimapEnabled { get; set; }
+
+    bool EnablePostProcess { get; set; }
+    void PostProcess();
+
+    event Action OnChanged;
+
+    void Update();
 }
