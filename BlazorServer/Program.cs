@@ -1,23 +1,22 @@
-using System;
-using System.Threading;
-
 using Core;
 
 using Frontend;
 
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 using Serilog;
-using Serilog.Events;
-using Serilog.Templates.Themes;
 using Serilog.Templates;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.FileProviders;
+using Serilog.Templates.Themes;
+
+using System;
 using System.IO;
+using System.Threading;
 
 namespace BlazorServer;
 
@@ -27,10 +26,10 @@ public static class Program
     {
         while (true)
         {
-            Log.Information($"[{nameof(Program),-15}] Starting blazor server");
+            Log.Information($"[{nameof(Program),-17}] Starting blazor server");
             try
             {
-                IHost host = CreateApp(args);
+                var host = CreateApp(args);
                 var logger = host.Services.GetRequiredService<Microsoft.Extensions.Logging.ILogger>();
 
                 AppDomain.CurrentDomain.UnhandledException += (object sender, UnhandledExceptionEventArgs args) =>
@@ -43,7 +42,7 @@ public static class Program
             }
             catch (Exception ex)
             {
-                Log.Information($"[{nameof(Program),-15}] {ex.Message}");
+                Log.Information($"[{nameof(Program),-17}] {ex.Message}");
                 Log.Information("");
 
                 Thread.Sleep(3000);
@@ -73,12 +72,11 @@ public static class Program
             LoggerSink sink = new();
             builder.Services.AddSingleton(sink);
 
-            const string outputTemplate = "[{@t:HH:mm:ss:fff} {@l:u1}] {#if Length(SourceContext) > 0}[{Substring(SourceContext, LastIndexOf(SourceContext, '.') + 1),-15}] {#end}{@m}\n{@x}";
+            const string outputTemplate = "[{@t:HH:mm:ss:fff} {@l:u1}] {#if Length(SourceContext) > 0}[{Substring(SourceContext, LastIndexOf(SourceContext, '.') + 1),-17}] {#end}{@m}\n{@x}";
+            //const string outputTemplate = "[{@t:HH:mm:ss:fff} {@l:u1}] {SourceContext}] {@m}\n{@x}";
 
             Log.Logger = new LoggerConfiguration()
-                .MinimumLevel.Debug()
-                .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
-                .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Information)
+                .ReadFrom.Configuration(configuration)
                 .Enrich.FromLogContext()
                 .WriteTo.Sink(sink)
                 .WriteTo.File(new ExpressionTemplate(outputTemplate),

@@ -42,8 +42,8 @@ local CAST_SUCCESS = 999999
 local MERCHANT_SHOW_V = 9999999
 local MERCHANT_CLOSED_V = 9999998
 
-local GOSSIP_START = 69
-local GOSSIP_END = 9999994
+DataToColor.GOSSIP_START = 69
+DataToColor.GOSSIP_END = 9999994
 
 local som_spellId = 0
 
@@ -99,6 +99,8 @@ function DataToColor:RegisterEvents()
     DataToColor:RegisterEvent("UNIT_SPELLCAST_SENT", 'OnUnitSpellCastSent')
     DataToColor:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", 'OnUnitSpellCastSucceeded')
     DataToColor:RegisterEvent("UNIT_SPELLCAST_FAILED", 'OnUnitSpellCastFailed')
+    DataToColor:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START", 'OnUnitSpellCastChannelStart')
+    DataToColor:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP", 'OnUnitSpellCastChannelStop')
     --DataToColor:RegisterEvent("UNIT_SPELLCAST_FAILED_QUIET", 'OnUnitSpellCastFailed')
     DataToColor:RegisterEvent('LOOT_READY', 'OnLootReady')
     DataToColor:RegisterEvent('LOOT_CLOSED', 'OnLootClosed')
@@ -108,7 +110,7 @@ function DataToColor:RegisterEvents()
     DataToColor:RegisterEvent('MERCHANT_CLOSED', 'OnMerchantClosed')
     DataToColor:RegisterEvent('PLAYER_TARGET_CHANGED', 'OnPlayerTargetChanged')
     DataToColor:RegisterEvent('PLAYER_EQUIPMENT_CHANGED', 'OnPlayerEquipmentChanged')
-    DataToColor:RegisterEvent('GOSSIP_SHOW', 'OnGossipShow')
+    DataToColor:RegisterEvent('GOSSIP_SHOW', 'OnGossipShow') -- defined in Versions.lua
     DataToColor:RegisterEvent('SPELLS_CHANGED', 'OnSpellsChanged')
     DataToColor:RegisterEvent('ACTIONBAR_SLOT_CHANGED', 'ActionbarSlotChanged')
     DataToColor:RegisterEvent('CORPSE_IN_RANGE', 'CorpseInRangeEvent')
@@ -135,6 +137,11 @@ function DataToColor:RegisterEvents()
     DataToColor:RegisterEvent('CHAT_MSG_TEXT_EMOTE', 'OnMessageEmote')
     DataToColor:RegisterEvent('CHAT_MSG_PARTY', 'OnMessageParty')
     DataToColor:RegisterEvent('CHAT_MSG_PARTY_LEADER', 'OnMessageParty')
+
+    -- allows to use the addon with older client version
+    pcall(function()
+        DataToColor:RegisterEvent("PLAYER_SOFT_INTERACT_CHANGED", "OnPlayerSoftInteractChanged")
+    end)
 
     -- Season of mastery / vanilla
     if WOW_PROJECT_ID == WOW_PROJECT_CLASSIC then
@@ -163,7 +170,7 @@ end
 
 function DataToColor:OnUIErrorMessage(_, _, message)
     if ignoreErrorListMessages[message] then
-        UIErrorsFrame:AddMessage(message, 0.7, 0.7, 0.7) -- show as grey messasge
+        UIErrorsFrame:AddMessage(message, 0.7, 0.7, 0.7) -- show as grey message
         return
     end
 
@@ -171,14 +178,15 @@ function DataToColor:OnUIErrorMessage(_, _, message)
     if code > 0 then
         DataToColor.uiErrorMessage = code
         DataToColor.uiErrorMessageTime = DataToColor.globalTime
-        UIErrorsFrame:AddMessage(message, 0, 1, 0) -- show as green messasge
+        --UIErrorsFrame:AddMessage(code .. " " .. message, 0, 1, 0) -- show as green message
+        UIErrorsFrame:AddMessage(message, 0, 1, 0) -- show as green message
         return
     else
         for i, v in pairs(specialErrorS) do
             if string.find(message, i) then
                 DataToColor.uiErrorMessage = v
                 DataToColor.uiErrorMessageTime = DataToColor.globalTime
-                UIErrorsFrame:AddMessage(message, 0, 1, 0) -- show as green messasge
+                UIErrorsFrame:AddMessage(message, 0, 1, 0) -- show as green message
                 return
             end
         end
@@ -290,8 +298,9 @@ function DataToColor:OnCombatEvent(...)
         --DataToColor:Print("Damage Taken ", sourceGUID)
 
         local targetGuid = UnitGUID(DataToColor.C.unitTarget)
-        if targetGuid == sourceGUID and not UnitIsTapDenied(DataToColor.C.unitTarget) then
+        if targetGuid == sourceGUID and not UnitIsTapDenied(DataToColor.C.unitTarget) and DataToColor.eligibleKillCredit[sourceGUID] == nil then
             DataToColor.eligibleKillCredit[sourceGUID] = true
+            --DataToColor:Print("Kill Credit added(take): ", sourceGUID)
         end
 
         DataToColor.CombatDamageTakenQueue:push(DataToColor:getGuidFromUUID(sourceGUID))
@@ -392,8 +401,9 @@ function DataToColor:OnCombatEvent(...)
             --DataToColor:Print(subEvent, " ", destGUID)
 
             local targetGuid = UnitGUID(DataToColor.C.unitTarget)
-            if targetGuid == destGUID and not UnitIsTapDenied(DataToColor.C.unitTarget) then
+            if targetGuid == destGUID and not UnitIsTapDenied(DataToColor.C.unitTarget) and DataToColor.eligibleKillCredit[destGUID] == nil then
                 DataToColor.eligibleKillCredit[destGUID] = true
+                --DataToColor:Print("Kill Credit added(done): ", destGUID)
             end
 
             DataToColor.CombatDamageDoneQueue:push(DataToColor:getGuidFromUUID(destGUID))
@@ -434,6 +444,7 @@ function DataToColor:OnCombatEvent(...)
         if band(destFlags, COMBATLOG_OBJECT_TYPE_NPC) > 0 and DataToColor.eligibleKillCredit[destGUID] then
             DataToColor.CombatCreatureDiedQueue:push(DataToColor:getGuidFromUUID(destGUID))
             DataToColor.lastLoot = DataToColor.C.Loot.Corpse
+            DataToColor.sessionKillCount = DataToColor.sessionKillCount + 1
             --DataToColor:Print(subEvent, " ", destGUID, " ", DataToColor:getGuidFromUUID(destGUID))
         elseif destGUID == DataToColor.playerGUID then
             DataToColor.CombatCreatureDiedQueue:push(16777215)
@@ -474,6 +485,16 @@ function DataToColor:OnUnitSpellCastFailed(event, unit, castGUID, spellId)
     DataToColor.lastCastEvent = DataToColor.uiErrorMessage
     DataToColor.uiErrorMessageTime = DataToColor.globalTime
     DataToColor.lastCastSpellId = spellId
+end
+
+function DataToColor:OnUnitSpellCastChannelStart(event, unit, castGUID, spellID)
+    if unit ~= DataToColor.C.unitPlayer then return end
+    DataToColor.channeling = true
+end
+
+function DataToColor:OnUnitSpellCastChannelStop(event, unit, castGUID, spellID)
+    if unit ~= DataToColor.C.unitPlayer then return end
+    DataToColor.channeling = false
 end
 
 function DataToColor:SoM_OnCastSuccess(event, unitTarget, castGuid, spellId)
@@ -534,6 +555,7 @@ function DataToColor:OnPlayerEquipmentChanged(event, equipmentSlot, hasCurrent)
     --DataToColor:Print("OnPlayerEquipmentChanged "..equipmentSlot.." -> "..c)
 end
 
+--[[
 function DataToColor:OnGossipShow(event)
     local options = GetGossipOptions()
     if not options then
@@ -542,18 +564,15 @@ function DataToColor:OnGossipShow(event)
 
     DataToColor.gossipQueue:push(GOSSIP_START)
 
-    -- returns variable string - format of one entry
-    -- [1] localized name
-    -- [2] gossip_type
-    local GossipOptions = { GetGossipOptions() }
-    local count = #GossipOptions / 2
-    for k, v in pairs(GossipOptions) do
-        if k % 2 == 0 then
-            DataToColor.gossipQueue:push(10000 * count + 100 * (k / 2) + DataToColor.C.Gossip[v])
-        end
+    local count = #options
+    for i, v in pairs(options) do
+        local hash = 10000 * count + 100 * i + DataToColor.C.GossipIcon[v.icon]
+        --DataToColor:Print(i .. " " .. v.icon .. " " .. DataToColor.C.GossipIcon[v.icon] .. " " .. v.name .. " " .. hash)
+        DataToColor.gossipQueue:push(hash)
     end
     DataToColor.gossipQueue:push(GOSSIP_END)
 end
+]]--
 
 function DataToColor:OnSpellsChanged(event)
     DataToColor:InitTalentQueue()
@@ -656,6 +675,10 @@ function AddMessageToQueue(type, msg, author)
     DataToColor.ChatQueue:push({ type = type, length = string.len(msg), msg = msg })
 end
 
+function DataToColor:OnPlayerSoftInteractChanged(event, old, new)
+    DataToColor.softInteractGuid = new
+    --print(event, old, "vs", new, DataToColor:getGuidFromUUID(new), DataToColor:getNpcIdFromUUID(new))
+end
 
 local CORPSE_RETRIEVAL_DISTANCE = 40
 

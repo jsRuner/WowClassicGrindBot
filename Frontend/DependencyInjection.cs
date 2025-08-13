@@ -1,7 +1,4 @@
-﻿using BlazorTable;
-using MatBlazor;
-
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 
 namespace Frontend;
 
@@ -9,14 +6,12 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddFrontend(this IServiceCollection services)
     {
-        services.AddMatBlazor();
+        services.AddBlazorBootstrap();
 
         services.AddRazorPages();
 
         services.AddRazorComponents()
             .AddInteractiveServerComponents();
-
-        services.AddBlazorTable();
 
         return services;
     }

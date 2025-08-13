@@ -1,8 +1,4 @@
-﻿using System;
-using SixLabors.ImageSharp;
-using System.Threading;
-
-using Core.Addon;
+﻿using Core.Addon;
 using Core.Database;
 using Core.Extensions;
 using Core.Goals;
@@ -18,6 +14,11 @@ using PPather;
 
 using SharedLib;
 using SharedLib.NpcFinder;
+
+using SixLabors.ImageSharp;
+
+using System;
+using System.Threading;
 
 using WinAPI;
 
@@ -66,6 +67,8 @@ public static class DependencyInjection
             x => new(83, 84));
         s.ForwardSingleton<AuraTimeReader<IFocusBuffTimeReader>, IReader>(
             x => new(92, 93));
+        s.ForwardSingleton<AuraTimeReader<IPlayerDebuffTimeReader>, IReader>(
+            x => new(104, 105));
 
         return s;
     }
@@ -134,6 +137,7 @@ public static class DependencyInjection
         s.ForwardSingleton<ActionBarBits<IUsableAction>>(sp);
 
         s.ForwardSingleton<AuraTimeReader<IPlayerBuffTimeReader>>(sp);
+        s.ForwardSingleton<AuraTimeReader<IPlayerDebuffTimeReader>>(sp);
         s.ForwardSingleton<AuraTimeReader<ITargetDebuffTimeReader>>(sp);
         s.ForwardSingleton<AuraTimeReader<ITargetBuffTimeReader>>(sp);
         s.ForwardSingleton<AuraTimeReader<IFocusBuffTimeReader>>(sp);
@@ -166,6 +170,9 @@ public static class DependencyInjection
         s.AddSingleton<IScreenCapture>(x =>
             GetScreenCapture(x.GetRequiredService<IServiceProvider>(), log));
 
+        s.AddSingleton<IPathVizualizer>(x =>
+            GetPathVizualizer(x.GetRequiredService<IServiceProvider>(), log));
+
         s.AddSingleton<IPPather>(x =>
             GetPather(x.GetRequiredService<IServiceProvider>(), log));
 
@@ -195,7 +202,7 @@ public static class DependencyInjection
 
     public static IServiceCollection AddCoreBase(this IServiceCollection s)
     {
-        s.AddSingleton<AutoResetEvent>(x => new(false));
+        s.AddSingleton<ManualResetEventSlim>(x => new(false));
         s.AddSingleton<Wait>();
 
         s.AddSingleton<StartupClientVersion>();
@@ -251,14 +258,26 @@ public static class DependencyInjection
         }
 
         NativeMethods.GetWindowRect(process.MainWindowHandle, out Rectangle rect);
-        if (FrameConfig.Exists() && !FrameConfig.IsValid(rect, installVersion))
+        if (!FrameConfig.Exists())
         {
-            // At this point the webpage never loads so fallback to configuration page
-            FrameConfig.Delete();
-            log.LogError($"{nameof(FrameConfig)} doesn't exists or window rect is different then config!");
+            log.LogError($"{nameof(FrameConfig)} doesn't exists!");
 
             return false;
         }
+
+        if (!FrameConfig.IsValid(rect, installVersion))
+        {
+            // At this point the webpage never loads so fallback to configuration page
+            FrameConfig.Delete();
+
+            log.LogError($"{nameof(FrameConfig)} window rect is different then config!");
+            log.LogError($"{nameof(FrameConfig)} {rect}");
+            log.LogError($"{nameof(FrameConfig)} {installVersion}");
+            log.LogError($"{nameof(FrameConfig)} {FrameConfig.Load()}");
+
+            return false;
+        }
+
 
         return true;
     }
@@ -306,12 +325,14 @@ public static class DependencyInjection
         var scp = sp.GetRequiredService<IOptions<StartupConfigPathing>>().Value;
         var dataConfig = sp.GetRequiredService<DataConfig>();
         var worldMapAreaDB = sp.GetRequiredService<WorldMapAreaDB>();
+        var pathViz = sp.GetRequiredService<IPathVizualizer>();
 
         bool failed = false;
         if (scp.Type == StartupConfigPathing.Types.RemoteV3)
         {
             var remoteLogger = loggerFactory.CreateLogger<RemotePathingAPIV3>();
             RemotePathingAPIV3 api = new(
+                pathViz,
                 remoteLogger,
                 scp.hostv3, scp.portv3, worldMapAreaDB);
             if (api.PingServer())
@@ -359,5 +380,33 @@ public static class DependencyInjection
             $"Using {StartupConfigPathing.Types.Local}({localApi.GetType().Name})");
 
         return localApi;
+    }
+
+    private static IPathVizualizer GetPathVizualizer(IServiceProvider sp, ILogger logger)
+    {
+        var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+        var remoteLogger = loggerFactory.CreateLogger<RemotePathingAPI>();
+
+        var scp = sp.GetRequiredService<IOptions<StartupConfigPathing>>().Value;
+
+        if (!scp.PathVisualizer)
+        {
+            return new NoPathVisualizer();
+        }
+
+        RemotePathingAPI? api = new(remoteLogger, scp.hostv1, scp.portv1);
+        if (!api.PingServer())
+        {
+            api.Dispose();
+            api = null;
+        }
+        else
+        {
+            logger.LogInformation(
+                $"Found PathViz {StartupConfigPathing.Types.RemoteV1}({api.GetType().Name}) " +
+                $"{scp.hostv1}:{scp.portv1}");
+        }
+
+        return api ?? (IPathVizualizer)new NoPathVisualizer();
     }
 }

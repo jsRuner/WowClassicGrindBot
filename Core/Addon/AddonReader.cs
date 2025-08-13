@@ -6,12 +6,14 @@ using System;
 using System.Collections.Immutable;
 using System.Threading;
 
+using static System.Diagnostics.Stopwatch;
+
 namespace Core;
 
 public sealed class AddonReader : IAddonReader
 {
     private readonly IAddonDataProvider reader;
-    private readonly AutoResetEvent resetEvent;
+    private readonly ManualResetEventSlim resetEvent;
 
     private readonly PlayerReader playerReader;
     private readonly CreatureDB creatureDb;
@@ -33,7 +35,7 @@ public sealed class AddonReader : IAddonReader
     public double AvgUpdateLatency { private set; get; }
 
     public AddonReader(IAddonDataProvider reader,
-        PlayerReader playerReader, AutoResetEvent resetEvent,
+        PlayerReader playerReader, ManualResetEventSlim resetEvent,
         CreatureDB creatureDb,
         CombatLog combatLog,
         DataFrame[] frames,
@@ -55,11 +57,12 @@ public sealed class AddonReader : IAddonReader
         IAddonDataProvider reader = this.reader;
         reader.UpdateData();
 
-        if (!GlobalTime.UpdatedNoEvent(reader))
+        long lastUpdate = GlobalTime.LastChanged;
+
+        if (!GlobalTime.Updated(reader))
             return;
 
-        AvgUpdateLatency = (DateTime.UtcNow - GlobalTime.LastChanged).TotalMilliseconds;
-        GlobalTime.UpdateTime();
+        AvgUpdateLatency = GetElapsedTime(lastUpdate).TotalMilliseconds;
 
         if (GlobalTime.Value <= 3)
         {

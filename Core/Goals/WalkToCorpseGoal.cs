@@ -1,5 +1,7 @@
 using Core.GOAP;
+
 using Microsoft.Extensions.Logging;
+
 using System;
 using System.Numerics;
 
@@ -23,6 +25,12 @@ public sealed partial class WalkToCorpseGoal : GoapGoal, IGoapEventListener, IRo
     #region IRouteProvider
 
     public DateTime LastActive => navigation.LastActive;
+
+    public Vector3[] MapRoute()
+    {
+        return Array.Empty<Vector3>();
+    }
+
 
     public Vector3[] PathingRoute()
     {
@@ -124,7 +132,7 @@ public sealed partial class WalkToCorpseGoal : GoapGoal, IGoapEventListener, IRo
 
     private bool AliveOrLoadingScreen()
     {
-        return playerReader.CorpseMapPos == Vector3.Zero;
+        return bits.Dead() && playerReader.CorpseMapPos == Vector3.Zero;
     }
 
     private void Log(string text)

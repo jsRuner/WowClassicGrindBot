@@ -17,6 +17,9 @@ DataToColor.C.unitParty = "party"
 DataToColor.C.unitRaid = "raid"
 DataToColor.C.unitPet = "pet"
 
+DataToColor.C.unitPartyNames = {}
+DataToColor.C.unitPartyPetNames = {}
+
 if WOW_PROJECT_ID == WOW_PROJECT_CLASSIC then
     DataToColor.C.unitFocus = "party1"
     DataToColor.C.unitFocusTarget = "party1target"
@@ -30,6 +33,7 @@ DataToColor.C.unitTargetTarget = "targettarget"
 DataToColor.C.unitNormal = "normal"
 DataToColor.C.unitmouseover = "mouseover"
 DataToColor.C.unitmouseovertarget = "mouseovertarget"
+DataToColor.C.unitSoftInteract = "softinteract"
 
 DataToColor.C.SpellQueueWindow = "SpellQueueWindow"
 
@@ -53,6 +57,23 @@ DataToColor.C.Loot.Ready = 1
 DataToColor.C.Loot.Closed = 2
 
 -- Gossips
+
+-- https://www.townlong-yak.com/framexml/live/Helix/ArtTextureID.lua
+-- [132060]="Interface/GossipFrame/VendorGossipIcon"
+DataToColor.C.GossipIcon = {
+    [132050] = 0,   --banker
+    [132051] = 1,   --battlemaster
+    [132052] = 2,   --binder
+    [132053] = 3,   --gossip
+    [132054] = 4,   --healer
+    [132055] = 5,   --petition
+    [132056] = 6,   --tabard
+    [132057] = 7,   --taxi
+    [132058] = 8,   --trainer
+    [132059] = 9,   --unlearn
+    [132060] = 10,  --vendor
+}
+
 DataToColor.C.Gossip = {
     ["banker"] = 0,
     ["battlemaster"] = 1,
@@ -67,8 +88,31 @@ DataToColor.C.Gossip = {
     ["vendor"] = 10,
 }
 
+-- Gossips
+DataToColor.C.GuidType = {
+    ["None"] = 0,
+    ["Creature"] = 1,
+    ["Pet"] = 2,
+    ["GameObject"] = 3,
+    ["Vehicle"] = 4,
+}
+
+DataToColor.C.unitClassification = {
+    ["normal"] = 1,
+    ["trivial"] = 2,
+    ["minus"] = 4,
+    ["rare"] = 8,
+    ["elite"] = 16,
+    ["rareelite"] = 32,
+    ["worldboss"] = 64
+}
+
 -- Mirror timer labels
 DataToColor.C.MIRRORTIMER.BREATH = "BREATH"
 
 DataToColor.C.ActionType.Spell = "spell"
 DataToColor.C.ActionType.Macro = "macro"
+
+DataToColor.C.PET_MODE_DEFENSIVE = "PET_MODE_DEFENSIVE"
+
+DataToColor.C.CVarSoftTargetInteract = "SoftTargetInteract"

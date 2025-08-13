@@ -40,6 +40,8 @@ public sealed class WowScreenDXGI : IWowScreen, IAddonDataProvider
     public Rectangle ScreenRect => screenRect;
     private Rectangle screenRect;
 
+    private readonly Vortice.RawRect monitorRect;
+
     public Image<Bgra32> ScreenImage { get; init; }
 
     private readonly SixLabors.ImageSharp.Configuration ContiguousJpegConfiguration
@@ -51,11 +53,11 @@ public sealed class WowScreenDXGI : IWowScreen, IAddonDataProvider
     public Image<Bgra32> MiniMapImage { get; init; }
 
     private static readonly FeatureLevel[] s_featureLevels =
-    {
+    [
         FeatureLevel.Level_12_1,
         FeatureLevel.Level_12_0,
         FeatureLevel.Level_11_0,
-    };
+    ];
 
     private readonly IDXGIAdapter adapter;
     private readonly IDXGIOutput output;
@@ -72,11 +74,11 @@ public sealed class WowScreenDXGI : IWowScreen, IAddonDataProvider
 
     // IAddonDataProvider
 
-    private Size addonSize;
+    private SixLabors.ImageSharp.Size addonSize;
     private DataFrame[] frames = null!;
     private Image<Bgra32> addonImage = null!;
 
-    public int[] Data { get; private set; } = Array.Empty<int>();
+    public int[] Data { get; private set; } = [];
     public StringBuilder TextBuilder { get; } = new(3);
 
     public WowScreenDXGI(ILogger<WowScreenDXGI> logger,
@@ -88,8 +90,6 @@ public sealed class WowScreenDXGI : IWowScreen, IAddonDataProvider
         Bgra32Size = Unsafe.SizeOf<Bgra32>();
 
         GetRectangle(out screenRect);
-        windowedMode = IsWindowedMode(screenRect.Location);
-
         ScreenImage = new(ContiguousJpegConfiguration, screenRect.Width, screenRect.Height);
 
         MiniMapRect = new(0, 0, MiniMapSize, MiniMapSize);
@@ -105,15 +105,23 @@ public sealed class WowScreenDXGI : IWowScreen, IAddonDataProvider
         if (result == Result.Fail)
             throw new Exception($"Unable to enumerate adapter! {result.Description}");
 
-        int srcIdx = 0;
+        uint srcIdx = 0;
         do
         {
             result = adapter.EnumOutputs(srcIdx, out output);
             if (result == Result.Ok &&
                 output.Description.Monitor == hMonitor)
             {
+                monitorRect = output.Description.DesktopCoordinates;
+                windowedMode =
+                    (monitorRect.Right - monitorRect.Left) != screenRect.Width ||
+                    (monitorRect.Bottom - monitorRect.Top) != screenRect.Height;
+
+                NormalizeScreenRect();
+
                 break;
             }
+            srcIdx++;
         } while (result != Result.Fail);
 
         output1 = output.QueryInterface<IDXGIOutput1>();
@@ -130,8 +138,8 @@ public sealed class WowScreenDXGI : IWowScreen, IAddonDataProvider
             CPUAccessFlags = CpuAccessFlags.Read,
             BindFlags = BindFlags.None,
             Format = Format.B8G8R8A8_UNorm,
-            Width = screenRect.Right,
-            Height = screenRect.Bottom,
+            Width = (uint)screenRect.Right,
+            Height = (uint)screenRect.Bottom,
             MiscFlags = ResourceOptionFlags.None,
             MipLevels = 1,
             ArraySize = 1,
@@ -147,8 +155,8 @@ public sealed class WowScreenDXGI : IWowScreen, IAddonDataProvider
             CPUAccessFlags = CpuAccessFlags.Read,
             BindFlags = BindFlags.None,
             Format = Format.B8G8R8A8_UNorm,
-            Width = MiniMapRect.Right,
-            Height = MiniMapRect.Bottom,
+            Width = (uint)MiniMapRect.Right,
+            Height = (uint)MiniMapRect.Bottom,
             MiscFlags = ResourceOptionFlags.None,
             MipLevels = 1,
             ArraySize = 1,
@@ -157,9 +165,11 @@ public sealed class WowScreenDXGI : IWowScreen, IAddonDataProvider
         };
         minimapTexture = device.CreateTexture2D(miniMapTextureDesc);
 
-        this.logger.LogInformation($"{screenRect} - " +
+        logger.LogInformation($"{screenRect} - " +
             $"Windowed Mode: {windowedMode} - " +
-            $"Scale: {DPI2PPI(GetDpi()):F2}");
+            $"Scale: {DPI2PPI(GetDpi()):F2} - " +
+            $"Monitor Rect: {monitorRect} - " +
+            $"Monitor Index: {srcIdx}");
     }
 
     public void Dispose()
@@ -198,8 +208,8 @@ public sealed class WowScreenDXGI : IWowScreen, IAddonDataProvider
             CPUAccessFlags = CpuAccessFlags.Read,
             BindFlags = BindFlags.None,
             Format = Format.B8G8R8A8_UNorm,
-            Width = addonSize.Width,
-            Height = addonSize.Height,
+            Width = (uint)addonSize.Width,
+            Height = (uint)addonSize.Height,
             MiscFlags = ResourceOptionFlags.None,
             MipLevels = 1,
             ArraySize = 1,
@@ -219,8 +229,8 @@ public sealed class WowScreenDXGI : IWowScreen, IAddonDataProvider
         if (windowedMode)
         {
             GetRectangle(out screenRect);
+            NormalizeScreenRect();
 
-            // TODO: bounds check
             if (screenRect.X < 0 ||
                 screenRect.Y < 0 ||
                 screenRect.Right > output.Description.DesktopCoordinates.Right ||
@@ -230,9 +240,9 @@ public sealed class WowScreenDXGI : IWowScreen, IAddonDataProvider
 
         duplication.ReleaseFrame();
 
-        Result result = duplication.AcquireNextFrame(0,
+        Result result = duplication.AcquireNextFrame(5,
             out OutduplFrameInfo frame,
-        out IDXGIResource idxgiResource);
+            out IDXGIResource idxgiResource);
 
         // If only the pointer was updated(that is, the desktop image was not updated),
         // the AccumulatedFrames, TotalMetadataBufferSize, LastPresentTime members are set to zero.
@@ -276,9 +286,14 @@ public sealed class WowScreenDXGI : IWowScreen, IAddonDataProvider
         MappedSubresource resource = device.ImmediateContext
             .Map(addonTexture, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
 
-        int rowPitch = resource.RowPitch;
+        int rowPitch = (int)resource.RowPitch;
         ReadOnlySpan<byte> src = resource.AsSpan(addonSize.Height * rowPitch);
         Span<byte> dest = MemoryMarshal.Cast<Bgra32, byte>(memory.Span);
+
+        if (addonSize.Height == 1 && src.TryCopyTo(dest))
+        {
+            goto Cleanup;
+        }
 
         int bytesToCopy = addonSize.Width * Bgra32Size;
         for (int y = 0; y < addonSize.Height; y++)
@@ -288,6 +303,7 @@ public sealed class WowScreenDXGI : IWowScreen, IAddonDataProvider
             srcRow.TryCopyTo(destRow);
         }
 
+    Cleanup:
         device.ImmediateContext.Unmap(addonTexture, 0);
     }
 
@@ -307,13 +323,17 @@ public sealed class WowScreenDXGI : IWowScreen, IAddonDataProvider
         MappedSubresource resource = device.ImmediateContext
             .Map(screenTexture, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
 
-        int rowPitch = resource.RowPitch;
+        int rowPitch = (int)resource.RowPitch;
         ReadOnlySpan<byte> src = resource.AsSpan(screenRect.Height * rowPitch);
         Span<byte> dest = MemoryMarshal.Cast<Bgra32, byte>(memory.Span);
 
-        if (!windowedMode)
+        // Issue: at 3440x1440 resolution game fullscreen
+        // the dest Span.Length much smaller then the src Span.Length
+        // this fails to copy the buffer
+        // so when TryCopyTo fails just fallback
+        // to copy by row
+        if (!windowedMode && src.TryCopyTo(dest))
         {
-            src.TryCopyTo(dest);
         }
         else
         {
@@ -345,7 +365,7 @@ public sealed class WowScreenDXGI : IWowScreen, IAddonDataProvider
         MappedSubresource resource = device.ImmediateContext
             .Map(minimapTexture, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
 
-        int rowPitch = resource.RowPitch;
+        int rowPitch = (int)resource.RowPitch;
         ReadOnlySpan<byte> src = resource.AsSpan(MiniMapRect.Height * rowPitch);
         Span<byte> dest = MemoryMarshal.Cast<Bgra32, byte>(memory.Span);
 
@@ -381,5 +401,17 @@ public sealed class WowScreenDXGI : IWowScreen, IAddonDataProvider
     public void GetRectangle(out Rectangle rect)
     {
         NativeMethods.GetWindowRect(process.MainWindowHandle, out rect);
+    }
+
+    private void NormalizeScreenRect()
+    {
+        screenRect.X -= monitorRect.Left;
+        screenRect.Y -= monitorRect.Top;
+
+        if (screenRect.X < 0)
+            screenRect.X = 0;
+
+        if (screenRect.Y < 0)
+            screenRect.Y = 0;
     }
 }

@@ -1,8 +1,10 @@
+using Microsoft.Extensions.Options;
+
+using SharedLib;
+
 using System;
 using System.Diagnostics;
 using System.Threading;
-
-using SharedLib;
 
 #nullable enable
 
@@ -10,13 +12,13 @@ namespace Game;
 
 public sealed class WowProcess
 {
-    private static readonly string[] defaultProcessNames = new string[] {
+    private static readonly string[] defaultProcessNames = [
         "Wow",
         "WowClassic",
         "WowClassicT",
         "Wow-64",
         "WowClassicB"
-    };
+    ];
 
     private readonly Thread thread;
     private readonly CancellationToken token;
@@ -44,7 +46,7 @@ public sealed class WowProcess
 
     public bool IsRunning { get; private set; }
 
-    public WowProcess(CancellationTokenSource cts, int pid = -1)
+    private WowProcess(CancellationTokenSource cts, int pid = -1)
     {
         token = cts.Token;
 
@@ -62,7 +64,7 @@ public sealed class WowProcess
         thread.Start();
     }
 
-    public WowProcess(CancellationTokenSource cts, StartupConfigPid pid) : this(cts, pid.Id) { }
+    public WowProcess(CancellationTokenSource cts, IOptions<StartupConfigPid> options) : this(cts, options.Value.Id) { }
 
     private void PollProcessExited()
     {

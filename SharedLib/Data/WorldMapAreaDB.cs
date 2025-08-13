@@ -1,11 +1,11 @@
-﻿using System;
+﻿using Newtonsoft.Json;
+
+using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
-
-using Newtonsoft.Json;
 
 namespace SharedLib;
 
@@ -32,6 +32,11 @@ public sealed class WorldMapAreaDB
     public int GetAreaId(int uiMap)
     {
         return wmas.TryGetValue(uiMap, out WorldMapArea map) ? map.AreaID : -1;
+    }
+
+    public int GetMapId(int uiMap)
+    {
+        return wmas.TryGetValue(uiMap, out WorldMapArea map) ? map.MapID : -1;
     }
 
     public bool TryGet(int uiMap, out WorldMapArea wma)
